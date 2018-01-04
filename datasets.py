@@ -33,9 +33,9 @@ class VideoDataset:
             num_epochs: if None, dataset is iterated indefinitely.
             crop_size: crop image into a square with sides of this length.
             scale_size: resize image to this size after it has been cropped.
-            sequence_length: the number of transitions in the video sequence,
-                so action-like sequences are of length sequence_length and
-                state-like sequences are of length sequence_length + 1.
+            sequence_length: the number of frames in the video sequence, so
+                state-like sequences are of length sequence_length and
+                action-like sequences are of length sequence_length - 1.
             frame_skip: number of frames to skip in between outputted frames,
                 so frame_skip=0 denotes no skipping.
             time_shift: shift in time by multiples of this, so time_shift=1
@@ -86,18 +86,24 @@ class VideoDataset:
         Should be called after state_like_names_and_shapes and
         action_like_names_and_shapes have been finalized.
         """
+        state_like_names_and_shapes = OrderedDict([(k, list(v)) for k, v in self.state_like_names_and_shapes.items()])
+        action_like_names_and_shapes = OrderedDict([(k, list(v)) for k, v in self.action_like_names_and_shapes.items()])
         from google.protobuf.json_format import MessageToDict
         example = next(tf.python_io.tf_record_iterator(self.filenames[0]))
         self._dict_message = MessageToDict(tf.train.Example.FromString(example))
-        for name_and_shape in (list(self.state_like_names_and_shapes.values()) +
-                               list(self.action_like_names_and_shapes.values())):
+        for example_name, name_and_shape in (list(state_like_names_and_shapes.items()) +
+                                             list(action_like_names_and_shapes.items())):
             name, shape = name_and_shape
             feature = self._dict_message['features']['feature']
             names = [name_ for name_ in feature.keys() if re.search(name.replace('%d', '(\d+)'), name_) is not None]
-            if self._max_sequence_length is None:
-                self._max_sequence_length = len(names)
+            if example_name in self.state_like_names_and_shapes:
+                sequence_length = len(names)
             else:
-                self._max_sequence_length = min(len(names), self._max_sequence_length)
+                sequence_length = len(names) + 1
+            if self._max_sequence_length is None:
+                self._max_sequence_length = sequence_length
+            else:
+                self._max_sequence_length = min(sequence_length, self._max_sequence_length)
             name = names[0]
             feature = feature[name]
             list_type, = feature.keys()
@@ -129,6 +135,8 @@ class VideoDataset:
                                          (name, inferred_shape, shape))
             else:
                 raise NotImplementedError
+        self.state_like_names_and_shapes = OrderedDict([(k, tuple(v)) for k, v in state_like_names_and_shapes.items()])
+        self.action_like_names_and_shapes = OrderedDict([(k, tuple(v)) for k, v in action_like_names_and_shapes.items()])
 
     def parser(self, serialized_example):
         """Parses a single tf.Example into images, states, actions, etc tensors."""
@@ -139,14 +147,15 @@ class VideoDataset:
                     features[name % i] = tf.FixedLenFeature([1], tf.string)
                 else:
                     features[name % i] = tf.FixedLenFeature(shape, tf.float32)
+        for i in range(self._max_sequence_length - 1):
             for example_name, (name, shape) in self.action_like_names_and_shapes.items():
                 features[name % i] = tf.FixedLenFeature(shape, tf.float32)
 
-            # check that the features are in the tfrecord
-            for name in features.keys():
-                if name not in self._dict_message['features']['feature']:
-                    raise ValueError('Feature with name %s not found in tfrecord. Possible feature names are:\n%s' %
-                                     (name, '\n'.join(sorted(self._dict_message['features']['feature'].keys()))))
+        # check that the features are in the tfrecord
+        for name in features.keys():
+            if name not in self._dict_message['features']['feature']:
+                raise ValueError('Feature with name %s not found in tfrecord. Possible feature names are:\n%s' %
+                                 (name, '\n'.join(sorted(self._dict_message['features']['feature'].keys()))))
 
         # parse all the features of all time steps together
         features = tf.parse_single_example(serialized_example, features=features)
@@ -167,38 +176,39 @@ class VideoDataset:
                     state_like_seqs[example_name].append(image)
                 else:
                     state_like_seqs[example_name].append(features[name % i])
+        for i in range(self._max_sequence_length - 1):
             for example_name, (name, shape) in self.action_like_names_and_shapes.items():
                 action_like_seqs[example_name].append(features[name % i])
 
         # set sequence_length to the longest possible if it is not specified
         if self.sequence_length is None:
-            self.sequence_length = (self._max_sequence_length - 1) // (self.frame_skip + 1)
+            self.sequence_length = (self._max_sequence_length - 1) // (self.frame_skip + 1) + 1
 
         # handle random shifting and frame skip
         if self.time_shift and self.mode == 'train':
             assert self.time_shift > 0 and isinstance(self.time_shift, int)
-            num_shifts = (self._max_sequence_length - (self.sequence_length * (self.frame_skip + 1) + 1)) // self.time_shift
+            num_shifts = ((self._max_sequence_length - 1) - (self.sequence_length - 1) * (self.frame_skip + 1)) // self.time_shift
             if num_shifts < 0:
                 raise ValueError('max_sequence_length has to be at least %d when '
                                  'sequence_length=%d, frame_skip=%d, but '
                                  'instead it is %d' %
-                                 ((self.sequence_length * (self.frame_skip + 1) + 1),
+                                 ((self.sequence_length - 1) * (self.frame_skip + 1) + 1,
                                   self.sequence_length, self.frame_skip, self._max_sequence_length))
             t_start = tf.random_uniform([], 0, num_shifts + 1, dtype=tf.int32) * self.time_shift
         else:
             t_start = 0
-        state_like_t_slice = slice(t_start, t_start + self.sequence_length * (self.frame_skip + 1) + 1, self.frame_skip + 1)
-        action_like_t_slice = slice(t_start, t_start + self.sequence_length * (self.frame_skip + 1))
+        state_like_t_slice = slice(t_start, t_start + (self.sequence_length - 1) * (self.frame_skip + 1) + 1, self.frame_skip + 1)
+        action_like_t_slice = slice(t_start, t_start + (self.sequence_length - 1) * (self.frame_skip + 1))
 
         for example_name, seq in state_like_seqs.items():
             seq = tf.stack(seq)[state_like_t_slice]
-            seq.set_shape([self.sequence_length + 1] + seq.shape.as_list()[1:])
+            seq.set_shape([self.sequence_length] + seq.shape.as_list()[1:])
             state_like_seqs[example_name] = seq
         for example_name, seq in action_like_seqs.items():
             seq = tf.stack(seq)[action_like_t_slice]
-            seq.set_shape([self.sequence_length * (self.frame_skip + 1)] + seq.shape.as_list()[1:])
+            seq.set_shape([(self.sequence_length - 1) * (self.frame_skip + 1)] + seq.shape.as_list()[1:])
             # concatenate actions of skipped frames into single macro actions
-            seq = tf.reshape(seq, [self.sequence_length, -1])
+            seq = tf.reshape(seq, [self.sequence_length - 1, -1])
             action_like_seqs[example_name] = seq
 
         return state_like_seqs, action_like_seqs
@@ -224,7 +234,7 @@ class VideoDataset:
         iterator = dataset.make_one_shot_iterator()
         state_like_batches, action_like_batches = iterator.get_next()
 
-        return state_like_batches, action_like_batches
+        return OrderedDict(list(state_like_batches.items()) + list(action_like_batches.items()))
 
     def preprocess_image(self, image):
         """Preprocess a single image in [height, width, depth] layout."""
@@ -359,8 +369,8 @@ if __name__ == '__main__':
     sess = tf.Session()
 
     for dataset in datasets:
-        state_like_batches, _ = dataset.make_batch(batch_size)
-        image_batch = state_like_batches['image']
+        batches = dataset.make_batch(batch_size)
+        image_batch = batches['image']
         images = tf.reshape(image_batch, [-1] + image_batch.get_shape().as_list()[2:])
         images = sess.run(images)
         images = (images * 255).astype(np.uint8)
