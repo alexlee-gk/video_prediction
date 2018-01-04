@@ -342,6 +342,7 @@ class SV2PVideoDataset(VideoDataset):
 
 class SoftmotionVideoDataset(VideoDataset):
     def __init__(self, *args, **kwargs):
+        kwargs.setdefault('time_shift', 2)  # for this dataset, default should be 2 instead of 1
         super(SoftmotionVideoDataset, self).__init__(*args, **kwargs)
         self.state_like_names_and_shapes['image'] = '%d/image_view0/encoded', (64, 64, 3)
         if self.use_state:
