@@ -309,6 +309,8 @@ class SV2PVideoDataset(VideoDataset):
                 self.state_like_names_and_shapes['state'] = 'state_%d', (2,)
                 self.action_like_names_and_shapes['action'] = 'action_%d', (2,)
         elif self.dataset_name == 'humans':
+            if 'use_state' not in kwargs:  # default should be False only for humans dataset
+                self.use_state = False
             if self.use_state:
                 raise ValueError('SV2PVideoDataset does not have states, use_state should be False')
         else:
@@ -341,6 +343,9 @@ class SV2PVideoDataset(VideoDataset):
 
 
 class SoftmotionVideoDataset(VideoDataset):
+    """
+    https://sites.google.com/view/sna-visual-mpc
+    """
     def __init__(self, *args, **kwargs):
         kwargs.setdefault('time_shift', 2)  # for this dataset, default should be 2 instead of 1
         super(SoftmotionVideoDataset, self).__init__(*args, **kwargs)
@@ -362,7 +367,7 @@ if __name__ == '__main__':
     datasets = [
         GoogleRobotVideoDataset('data/push/push_testseen', mode='test'),
         SV2PVideoDataset('data/shape', mode='val'),
-        SV2PVideoDataset('data/humans', mode='val', use_state=False),
+        SV2PVideoDataset('data/humans', mode='val'),
         SoftmotionVideoDataset('data/softmotion30_v1', mode='val'),
     ]
     batch_size = 4
