@@ -21,13 +21,13 @@ class FixedBatchDataset(dataset_ops.BatchDataset):
 
 
 class VideoDataset:
-    def __init__(self, data_dir, mode='train', num_epochs=None,
+    def __init__(self, input_dir, mode='train', num_epochs=None,
                  crop_size=None, scale_size=None,
-                 sequence_length=None, frame_skip=0,
-                 time_shift=1, use_state=True):
+                 context_frames=None, sequence_length=None,
+                 frame_skip=None, time_shift=None, use_state=None):
         """
         Args:
-            data_dir: either a directory containing subdirectories train,
+            input_dir: either a directory containing subdirectories train,
                 val, test, etc, or a directory containing the tfrecords.
             mode: either train, val, or test
             num_epochs: if None, dataset is iterated indefinitely.
@@ -44,33 +44,34 @@ class VideoDataset:
             use_state: whether to load and return state and actions.
 
         Note:
-            self.data_dir is the directory containing the tfrecords.
+            self.input_dir is the directory containing the tfrecords.
         """
-        self.data_dir = os.path.normpath(os.path.expanduser(data_dir))
+        self.input_dir = os.path.normpath(os.path.expanduser(input_dir))
         self.mode = mode
         self.num_epochs = num_epochs
         self.crop_size = crop_size
         self.scale_size = scale_size
+        self.context_frames = 1 if context_frames is None else context_frames
         self.sequence_length = sequence_length
-        self.frame_skip = frame_skip
-        self.time_shift = time_shift
-        self.use_state = use_state
+        self.frame_skip = 0 if frame_skip is None else frame_skip
+        self.time_shift = 1 if time_shift is None else time_shift
+        self.use_state = True if use_state is None else use_state
 
         if self.mode not in ('train', 'val', 'test'):
             raise ValueError('Invalid mode %s' % self.mode)
 
-        if not os.path.exists(self.data_dir):
-            raise FileNotFoundError("data_dir %s does not exist" % self.data_dir)
+        if not os.path.exists(self.input_dir):
+            raise FileNotFoundError("input_dir %s does not exist" % self.input_dir)
         self.filenames = None
-        # look for tfrecords in data_dir and data_dir/mode directories
-        for data_dir in [self.data_dir, os.path.join(self.data_dir, self.mode)]:
-            filenames = glob.glob(os.path.join(data_dir, '*.tfrecord*'))
+        # look for tfrecords in input_dir and input_dir/mode directories
+        for input_dir in [self.input_dir, os.path.join(self.input_dir, self.mode)]:
+            filenames = glob.glob(os.path.join(input_dir, '*.tfrecord*'))
             if filenames:
-                self.data_dir = data_dir
+                self.input_dir = input_dir
                 self.filenames = filenames
                 break
         if not self.filenames:
-            raise FileNotFoundError('No tfrecords were found in %s.' % self.data_dir)
+            raise FileNotFoundError('No tfrecords were found in %s.' % self.input_dir)
 
         self.state_like_names_and_shapes = OrderedDict()
         self.action_like_names_and_shapes = OrderedDict()
@@ -143,7 +144,7 @@ class VideoDataset:
         features = dict()
         for i in range(self._max_sequence_length):
             for example_name, (name, shape) in self.state_like_names_and_shapes.items():
-                if example_name == 'image':  # special handling for image
+                if example_name == 'images':  # special handling for image
                     features[name % i] = tf.FixedLenFeature([1], tf.string)
                 else:
                     features[name % i] = tf.FixedLenFeature(shape, tf.float32)
@@ -164,7 +165,7 @@ class VideoDataset:
         action_like_seqs = OrderedDict([(example_name, []) for example_name in self.action_like_names_and_shapes])
         for i in range(self._max_sequence_length):
             for example_name, (name, shape) in self.state_like_names_and_shapes.items():
-                if example_name == 'image':  # special handling for image
+                if example_name == 'images':  # special handling for image
                     if self.jpeg_encoding:
                         image_buffer = tf.reshape(features[name % i], shape=[])
                         image = tf.image.decode_jpeg(image_buffer, channels=shape[-1])
@@ -234,7 +235,9 @@ class VideoDataset:
         iterator = dataset.make_one_shot_iterator()
         state_like_batches, action_like_batches = iterator.get_next()
 
-        return OrderedDict(list(state_like_batches.items()) + list(action_like_batches.items()))
+        input_batches = OrderedDict(list(state_like_batches.items()) + list(action_like_batches.items()))
+        target_batches = state_like_batches['images'][:, self.context_frames:]
+        return input_batches, target_batches
 
     def preprocess_image(self, image):
         """Preprocess a single image in [height, width, depth] layout."""
@@ -277,18 +280,20 @@ class GoogleRobotVideoDataset(VideoDataset):
     https://sites.google.com/site/brainrobotdata/home/push-dataset
     """
     def __init__(self, *args, **kwargs):
+        if kwargs.get('context_frames') is None:
+            kwargs['context_frames'] = 2
         super(GoogleRobotVideoDataset, self).__init__(*args, **kwargs)
-        self.state_like_names_and_shapes['image'] = 'move/%d/image/encoded', (512, 640, 3)
+        self.state_like_names_and_shapes['images'] = 'move/%d/image/encoded', (512, 640, 3)
         if self.use_state:
-            self.state_like_names_and_shapes['state'] = 'move/%d/endeffector/vec_pitch_yaw', (5,)
-            self.action_like_names_and_shapes['action'] = 'move/%d/commanded_pose/vec_pitch_yaw', (5,)
+            self.state_like_names_and_shapes['states'] = 'move/%d/endeffector/vec_pitch_yaw', (5,)
+            self.action_like_names_and_shapes['actions'] = 'move/%d/commanded_pose/vec_pitch_yaw', (5,)
 
     def num_examples_per_epoch(self):
-        if os.path.basename(self.data_dir) == 'push_train':
+        if os.path.basename(self.input_dir) == 'push_train':
             count = 51615
-        elif os.path.basename(self.data_dir) == 'push_testseen':
+        elif os.path.basename(self.input_dir) == 'push_testseen':
             count = 1038
-        elif os.path.basename(self.data_dir) == 'push_testnovel':
+        elif os.path.basename(self.input_dir) == 'push_testnovel':
             count = 995
         else:
             raise NotImplementedError
@@ -302,14 +307,16 @@ class GoogleRobotVideoDataset(VideoDataset):
 class SV2PVideoDataset(VideoDataset):
     def __init__(self, *args, **kwargs):
         super(SV2PVideoDataset, self).__init__(*args, **kwargs)
-        self.dataset_name = os.path.basename(os.path.split(self.data_dir)[0])
-        self.state_like_names_and_shapes['image'] = 'image_%d', (64, 64, 3)
+        self.dataset_name = os.path.basename(os.path.split(self.input_dir)[0])
+        self.state_like_names_and_shapes['images'] = 'image_%d', (64, 64, 3)
         if self.dataset_name == 'shape':
             if self.use_state:
-                self.state_like_names_and_shapes['state'] = 'state_%d', (2,)
-                self.action_like_names_and_shapes['action'] = 'action_%d', (2,)
+                self.state_like_names_and_shapes['states'] = 'state_%d', (2,)
+                self.action_like_names_and_shapes['actions'] = 'action_%d', (2,)
         elif self.dataset_name == 'humans':
-            if 'use_state' not in kwargs:  # default should be False only for humans dataset
+            if kwargs.get('context_frames') is None:
+                kwargs['context_frames'] = 10
+            if kwargs.get('use_state') is None:  # default should be False only for humans dataset
                 self.use_state = False
             if self.use_state:
                 raise ValueError('SV2PVideoDataset does not have states, use_state should be False')
@@ -318,18 +325,18 @@ class SV2PVideoDataset(VideoDataset):
 
     def num_examples_per_epoch(self):
         if self.dataset_name == 'shape':
-            if os.path.basename(self.data_dir) == 'train':
+            if os.path.basename(self.input_dir) == 'train':
                 count = 43415
-            elif os.path.basename(self.data_dir) == 'val':
+            elif os.path.basename(self.input_dir) == 'val':
                 count = 2898
             else:  # shape dataset doesn't have a test set
                 raise NotImplementedError
         elif self.dataset_name == 'humans':
-            if os.path.basename(self.data_dir) == 'train':
+            if os.path.basename(self.input_dir) == 'train':
                 count = 23910
-            elif os.path.basename(self.data_dir) == 'val':
+            elif os.path.basename(self.input_dir) == 'val':
                 count = 10472
-            elif os.path.basename(self.data_dir) == 'test':
+            elif os.path.basename(self.input_dir) == 'test':
                 count = 7722
             else:
                 raise NotImplementedError
@@ -347,13 +354,16 @@ class SoftmotionVideoDataset(VideoDataset):
     https://sites.google.com/view/sna-visual-mpc
     """
     def __init__(self, *args, **kwargs):
-        kwargs.setdefault('time_shift', 2)  # for this dataset, default should be 2 instead of 1
+        if kwargs.get('context_frames') is None:
+            kwargs['context_frames'] = 2
+        if kwargs.get('time_shift') is None:
+            kwargs['time_shift'] = 2  # for this dataset, default should be 2 instead of 1
         super(SoftmotionVideoDataset, self).__init__(*args, **kwargs)
-        self.state_like_names_and_shapes['image'] = '%d/image_view0/encoded', (64, 64, 3)
+        self.state_like_names_and_shapes['images'] = '%d/image_view0/encoded', (64, 64, 3)
         if self.use_state:
-            self.state_like_names_and_shapes['state'] = '%d/endeffector_pos', (3,)
-            self.action_like_names_and_shapes['action'] = '%d/action', (4,)
-        if os.path.basename(self.data_dir).endswith('annotation'):
+            self.state_like_names_and_shapes['states'] = '%d/endeffector_pos', (3,)
+            self.action_like_names_and_shapes['actions'] = '%d/action', (4,)
+        if os.path.basename(self.input_dir).endswith('annotation'):
             self.state_like_names_and_shapes['object_pos'] = '%d/object_pos', (2,)
 
     @property
@@ -375,12 +385,12 @@ if __name__ == '__main__':
     sess = tf.Session()
 
     for dataset in datasets:
-        batches = dataset.make_batch(batch_size)
-        image_batch = batches['image']
-        images = tf.reshape(image_batch, [-1] + image_batch.get_shape().as_list()[2:])
+        inputs, _ = dataset.make_batch(batch_size)
+        images = inputs['images']
+        images = tf.reshape(images, [-1] + images.get_shape().as_list()[2:])
         images = sess.run(images)
         images = (images * 255).astype(np.uint8)
         for image in images:
             image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-            cv2.imshow(dataset.data_dir, image)
+            cv2.imshow(dataset.input_dir, image)
             cv2.waitKey(50)
