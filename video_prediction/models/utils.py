@@ -47,21 +47,23 @@ def replace_read_ops(loss, var_list):
     the variables (which might incur copies across devices).
     The graph is seeded from the tensor `loss`.
     """
-    dg_ops = set(ge.get_walks_intersection_ops([var.op for var in var_list], loss))
+    # ops between var ops and the loss
+    ops = set(ge.get_walks_intersection_ops([var.op for var in var_list], loss.op))
+
+    # assume that for each variable, the only op required to compute the loss
+    # is a read op, and there is exactly one per variable
     read_ops = []
-    enter_ops = []
     for var in var_list:
         output, = var.op.outputs
-        read_op, = set(output.consumers()) & dg_ops
-        output, = read_op.outputs
-        enter_op, = set(output.consumers()) & dg_ops
+        read_op, = set(output.consumers()) & ops
         read_ops.append(read_op)
-        enter_ops.append(enter_op)
 
-    for var, read_op, enter_op in zip(var_list, read_ops, enter_ops):
+    for var, read_op in zip(var_list, read_ops):
         with tf.name_scope('/'.join(read_op.name.split('/')[:-1])):
             with tf.device(read_op.device):
-                ge.connect(ge.sgv(var.read_value().op), ge.sgv(enter_op))
+                read_t, = read_op.outputs
+                consumer_ops = set(read_t.consumers()) & ops
+                ge.connect(ge.sgv(var.read_value().op), ge.sgv(consumer_ops))
 
 
 def print_loss_info(losses, inputs, outputs, targets):
