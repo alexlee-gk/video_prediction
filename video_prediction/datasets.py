@@ -89,10 +89,10 @@ class VideoDataset:
             use_state: whether to load and return state and actions.
         """
         hparams = dict(
-            crop_size=None,
-            scale_size=None,
+            crop_size=0,
+            scale_size=0,
             context_frames=1,
-            sequence_length=None,
+            sequence_length=0,
             frame_skip=0,
             time_shift=1,
             use_state=True,
@@ -206,7 +206,7 @@ class VideoDataset:
                 action_like_seqs[example_name].append(features[name % i])
 
         # set sequence_length to the longest possible if it is not specified
-        if self.hparams.sequence_length is None:
+        if not self.hparams.sequence_length:
             self.hparams.sequence_length = (self._max_sequence_length - 1) // (self.hparams.frame_skip + 1) + 1
 
         # handle random shifting and frame skip

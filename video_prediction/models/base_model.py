@@ -44,6 +44,12 @@ class SoftPlacementVideoPredictionModel:
                 These values overrides any values in hparams_dict (if any).
         """
         self.hparams = self.get_default_hparams().set_from_map(hparams_dict or {}).parse(hparams or '')
+        if not self.hparams.context_frames:
+            raise ValueError('Invalid context_frames %r. It might have to be '
+                             'specified.' % self.hparams.context_frames)
+        if not self.hparams.sequence_length:
+            raise ValueError('Invalid sequence_length %r. It might have to be '
+                             'specified.' % self.hparams.sequence_length)
 
         self.generator_fn = functools.partial(generator_fn, hparams=self.hparams)
         self.encoder_fn = functools.partial(encoder_fn, hparams=self.hparams) if encoder_fn else None
@@ -77,8 +83,8 @@ class SoftPlacementVideoPredictionModel:
         method if it has a different set of hyperparameters.
         """
         hparams = dict(
-            context_frames=None,  # should be specified in init
-            sequence_length=None,  # should be specified in init
+            context_frames=0,  # should be specified in init
+            sequence_length=0,  # should be specified in init
             l1_weight=0.0,
             l2_weight=1.0,
             state_weight=1e-4,
