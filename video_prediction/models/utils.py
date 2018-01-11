@@ -3,6 +3,7 @@ from collections import OrderedDict
 
 import six
 import tensorflow as tf
+import tensorflow.contrib.graph_editor as ge
 from tensorflow.core.framework import node_def_pb2
 from tensorflow.python.framework import device as pydev
 from tensorflow.python.training import device_setter
@@ -39,7 +40,31 @@ def local_device_setter(num_devices=1,
     return _local_device_chooser
 
 
-def print_loss_info(g_losses, d_losses, inputs, outputs, targets):
+def replace_read_ops(loss, var_list):
+    """
+    Replaces read ops of each variable in `vars` with new read ops obtained
+    from `read_value()`, thus forcing to read the most up-to-date values of
+    the variables (which might incur copies across devices).
+    The graph is seeded from the tensor `loss`.
+    """
+    dg_ops = set(ge.get_walks_intersection_ops([var.op for var in var_list], loss))
+    read_ops = []
+    enter_ops = []
+    for var in var_list:
+        output, = var.op.outputs
+        read_op, = set(output.consumers()) & dg_ops
+        output, = read_op.outputs
+        enter_op, = set(output.consumers()) & dg_ops
+        read_ops.append(read_op)
+        enter_ops.append(enter_op)
+
+    for var, read_op, enter_op in zip(var_list, read_ops, enter_ops):
+        with tf.name_scope('/'.join(read_op.name.split('/')[:-1])):
+            with tf.device(read_op.device):
+                ge.connect(ge.sgv(var.read_value().op), ge.sgv(enter_op))
+
+
+def print_loss_info(losses, inputs, outputs, targets):
     def get_descendants(tensor, tensors):
         descendants = []
         for child in tensor.op.inputs:
@@ -52,13 +77,8 @@ def print_loss_info(g_losses, d_losses, inputs, outputs, targets):
     name_to_tensors = list(inputs.items()) + list(outputs.items()) + [('targets', targets)]
     tensor_to_names = OrderedDict([(v, k) for k, v in name_to_tensors])
 
-    print('generator_losses')
-    for name, (loss, weight) in g_losses.items():
-        print('  %s (%r)' % (name, weight))
-        for descendant in get_descendants(loss, tensor_to_names.keys()):
-            print('    %s' % tensor_to_names[descendant])
-    print('discriminator_losses')
-    for name, (loss, weight) in d_losses.items():
+    print(tf.get_default_graph().get_name_scope())
+    for name, (loss, weight) in losses.items():
         print('  %s (%r)' % (name, weight))
         for descendant in get_descendants(loss, tensor_to_names.keys()):
             print('    %s' % tensor_to_names[descendant])
