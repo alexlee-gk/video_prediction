@@ -7,7 +7,7 @@ from tensorflow.contrib.training import HParams
 from tensorflow.python.util import nest
 
 import video_prediction as vp
-from video_prediction.models.utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
+from video_prediction.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
     replace_read_ops, print_loss_info, add_image_summaries, add_scalar_summaries
 
 

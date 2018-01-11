@@ -86,20 +86,24 @@ def print_loss_info(losses, inputs, outputs, targets):
             print('    %s' % tensor_to_names[descendant])
 
 
+def tensor_to_image(tensor):
+    if tensor.shape.ndims == 6:
+        # concatenate last dimension vertically
+        tensor= tf.concat(tf.unstack(tensor, axis=-1), axis=-3)
+    if tensor.shape.ndims == 5:
+        # concatenate time dimension horizontally
+        tensor = tf.concat(tf.unstack(tensor, axis=1), axis=2)
+    if tensor.shape.ndims == 4:
+        tensor = tf.image.convert_image_dtype(tensor, dtype=tf.uint8, saturate=True)
+    else:
+        raise NotImplementedError
+    return tensor
+
+
 def add_image_summaries(outputs):
     for name, output in outputs.items():
         with tf.name_scope("%s_summary" % name):
-            if output.shape.ndims == 6:
-                # concatenate last dimension vertically
-                output = tf.concat(tf.unstack(output, axis=-1), axis=-3)
-            if output.shape.ndims == 5:
-                # concatenate time dimension horizontally
-                output = tf.concat(tf.unstack(output, axis=1), axis=2)
-            if output.shape.ndims == 4:
-                output = tf.image.convert_image_dtype(output, dtype=tf.uint8, saturate=True)
-                tf.summary.image(name, output)
-            else:
-                raise NotImplementedError
+            tf.summary.image(name, tensor_to_image(output))
 
 
 def add_scalar_summaries(losses_or_metrics):
