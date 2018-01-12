@@ -7,6 +7,7 @@ import tensorflow.contrib.graph_editor as ge
 from tensorflow.core.framework import node_def_pb2
 from tensorflow.python.framework import device as pydev
 from tensorflow.python.training import device_setter
+from tensorflow.python.util import nest
 
 
 def local_device_setter(num_devices=1,
@@ -86,7 +87,21 @@ def print_loss_info(losses, inputs, outputs, targets):
             print('    %s' % tensor_to_names[descendant])
 
 
-def tensor_to_image(tensor):
+def tensor_to_clip(tensor):
+    if tensor.shape.ndims == 6:
+        # concatenate last dimension vertically
+        tensor = tf.concat(tf.unstack(tensor, axis=-1), axis=-3)
+    if tensor.shape.ndims == 5:
+        # concatenate batch dimension horizontally
+        tensor = tf.concat(tf.unstack(tensor, axis=0), axis=2)
+    if tensor.shape.ndims == 4:
+        tensor = tf.image.convert_image_dtype(tensor, dtype=tf.uint8, saturate=True)
+    else:
+        raise NotImplementedError
+    return tensor
+
+
+def tensor_to_image_batch(tensor):
     if tensor.shape.ndims == 6:
         # concatenate last dimension vertically
         tensor= tf.concat(tf.unstack(tensor, axis=-1), axis=-3)
@@ -103,7 +118,7 @@ def tensor_to_image(tensor):
 def add_image_summaries(outputs):
     for name, output in outputs.items():
         with tf.name_scope("%s_summary" % name):
-            tf.summary.image(name, tensor_to_image(output))
+            tf.summary.image(name, tensor_to_image_batch(output))
 
 
 def add_scalar_summaries(losses_or_metrics):
@@ -140,48 +155,38 @@ def compute_averaged_gradients(opt, tower_loss, **kwargs):
     return gradvars
 
 
-def reduce_tensors(all_names_and_values):
-    if any(isinstance(names_and_values, tf.Tensor) or names_and_values for names_and_values in all_names_and_values):
-        num_gpus = len(all_names_and_values)
-        if isinstance(all_names_and_values[0], tf.Tensor):
-            all_value = all_names_and_values
-            if all_value[0].shape.ndims == 0:
-                reduced_value = tf.add_n(all_value) / tf.to_float(num_gpus)
-            else:
-                reduced_value = tf.concat(all_value, axis=0)
-            return reduced_value
+def _reduce_entries(*entries):
+    num_gpus = len(entries)
+    if entries[0] is None:
+        assert all(entry is None for entry in entries[1:])
+        reduced_entry = None
+    elif isinstance(entries[0], tf.Tensor):
+        if entries[0].shape.ndims == 0:
+            reduced_entry = tf.add_n(entries) / tf.to_float(num_gpus)
         else:
-            if isinstance(all_names_and_values[0], (dict, OrderedDict)):
-                dtype = type(all_names_and_values[0])
-                assert all(isinstance(names_and_values, dtype) for names_and_values in all_names_and_values[1:])
-                all_names_and_values = [names_and_values.items() for names_and_values in all_names_and_values]
-            else:
-                dtype = None
-            reduced_names_and_values = []
-            for all_name_and_value in zip(*all_names_and_values):
-                all_name, all_value = zip(*all_name_and_value)
-                assert all(name == all_name[0] for name in all_name[1:])
-                name = all_name[0]
-                if isinstance(all_value[0], tuple):
-                    if len(all_value[0]) == 2:
-                        all_loss, all_weight = zip(*all_value)
-                        loss = tf.add_n(all_loss) / tf.to_float(num_gpus)
-                        if isinstance(all_weight[0], tf.Tensor):
-                            with tf.control_dependencies([tf.assert_equal(weight, all_weight[0]) for weight in all_weight[1:]]):
-                                weight = tf.identity(all_weight[0])
-                        else:
-                            assert all(weight == all_weight[0] for weight in all_weight[1:])
-                            weight = all_weight[0]
-                        value = (loss, weight)
-                    else:
-                        raise NotImplementedError
-                elif all_value[0].shape.ndims == 0:
-                    value = tf.add_n(all_value) / tf.to_float(num_gpus)
-                else:
-                    value = tf.concat(all_value, axis=0)
-                reduced_names_and_values.append((name, value))
-            if dtype is not None:
-                reduced_names_and_values = dtype(reduced_names_and_values)
-            return reduced_names_and_values
+            reduced_entry = tf.concat(entries, axis=0)
+    elif isinstance(entries[0], tuple) and len(entries[0]) == 2:
+        losses, weights = zip(*entries)
+        loss = tf.add_n(losses) / tf.to_float(num_gpus)
+        if isinstance(weights[0], tf.Tensor):
+            with tf.control_dependencies([tf.assert_equal(weight, weights[0]) for weight in weights[1:]]):
+                weight = tf.identity(weights[0])
+        else:
+            assert all(weight == weights[0] for weight in weights[1:])
+            weight = weights[0]
+        reduced_entry = (loss, weight)
     else:
-        return all_names_and_values[0]
+        raise NotImplementedError
+    return reduced_entry
+
+
+def reduce_tensors(structures, shallow=False):
+    if shallow:
+        if isinstance(structures[0], dict):
+            shallow_tree = type(structures[0])([(k, None) for k in structures[0]])
+        else:
+            shallow_tree = type(structures[0])([None for _ in structures[0]])
+        reduced_structure = nest.map_structure_up_to(shallow_tree, _reduce_entries, *structures)
+    else:
+        reduced_structure = nest.map_structure(_reduce_entries, *structures)
+    return reduced_structure

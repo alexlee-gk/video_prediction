@@ -24,10 +24,10 @@ class SoftPlacementVideoPredictionModel:
                  hparams=None):
         """
         Video prediction model with automatically chosen devices.
-        
+
         The devices for the ops in `self.build_graph` are automatically chosen
         by TensorFlow, i.e. `tf.device` is not specified.
-        
+
         Args:
             generator_fn: callable that takes in inputs (and optionally
                 what's returned by encoder_fn) and returns generated images
@@ -66,6 +66,8 @@ class SoftPlacementVideoPredictionModel:
         # member variables that should be set by `self.build_graph`
         self.inputs = None
         self.targets = None
+        self.gen_images = None
+        self.gen_images_enc = None
         self.outputs = None
         self.g_losses = None
         self.d_losses = None
@@ -79,7 +81,7 @@ class SoftPlacementVideoPredictionModel:
     def get_default_hparams_dict(self):
         """
         The keys of this dict define valid hyperparameters for instances of
-        this class. A class inheriting from this one should override this 
+        this class. A class inheriting from this one should override this
         method if it has a different set of hyperparameters.
         """
         hparams = dict(
@@ -131,6 +133,7 @@ class SoftPlacementVideoPredictionModel:
                     gen_outputs_enc = OrderedDict([(k + '_enc', v) for k, v in gen_outputs_enc.items()])
         else:
             outputs_enc = {}
+            gen_images_enc = None
             gen_outputs_enc = {}
 
         if self.discriminator_fn and targets is not None:
@@ -202,13 +205,15 @@ class SoftPlacementVideoPredictionModel:
             metrics = {}
 
         # time-major to batch-major
-        outputs = nest.map_structure(transpose_batch_time, outputs)
-        return outputs, g_losses, d_losses, metrics
+        outputs_tuple = (gen_images, gen_images_enc, outputs)
+        outputs_tuple = nest.map_structure(transpose_batch_time, outputs_tuple)
+        return outputs_tuple, g_losses, d_losses, metrics
 
     def build_graph(self, inputs, targets=None):
         self.inputs = inputs
         self.targets = targets
-        self.outputs, self.g_losses, self.d_losses, self.metrics = self.tower_fn(self.inputs, self.targets)
+        outputs_tuple, self.g_losses, self.d_losses, self.metrics = self.tower_fn(self.inputs, self.targets)
+        self.gen_images, self.gen_images_enc, self.outputs = outputs_tuple
         self.g_loss = sum(loss * weight for loss, weight in self.g_losses.values())
         self.d_loss = sum(loss * weight for loss, weight in self.d_losses.values())
 
@@ -335,7 +340,7 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
                 tower_inputs[i][name] = input_splits[i]
         tower_targets = tf.split(targets, self.num_gpus) if targets is not None else [None] * self.num_gpus
 
-        tower_outputs = []
+        tower_outputs_tuple = []
         tower_g_losses = []
         tower_d_losses = []
         tower_metrics = []
@@ -347,8 +352,8 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
             with tf.variable_scope('', reuse=bool(i > 0)):
                 with tf.name_scope('tower_%d' % i):
                     with tf.device(device_setter):
-                        outputs, g_losses, d_losses, metrics = self.tower_fn(tower_inputs[i], tower_targets[i])
-                        tower_outputs.append(outputs)
+                        outputs_tuple, g_losses, d_losses, metrics = self.tower_fn(tower_inputs[i], tower_targets[i])
+                        tower_outputs_tuple.append(outputs_tuple)
                         tower_g_losses.append(g_losses)
                         tower_d_losses.append(d_losses)
                         tower_metrics.append(metrics)
@@ -384,9 +389,9 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
         # Device that runs the ops to apply global gradient updates.
         consolidation_device = '/cpu:0'
         with tf.device(consolidation_device):
-            self.outputs = reduce_tensors(tower_outputs)
-            self.g_losses = reduce_tensors(tower_g_losses)
-            self.d_losses = reduce_tensors(tower_d_losses)
+            self.gen_images, self.gen_images_enc, self.outputs = reduce_tensors(tower_outputs_tuple)
+            self.g_losses = reduce_tensors(tower_g_losses, shallow=True)
+            self.d_losses = reduce_tensors(tower_d_losses, shallow=True)
             self.metrics = reduce_tensors(tower_metrics)
             self.g_loss = reduce_tensors(tower_g_loss)
             self.d_loss = reduce_tensors(tower_d_loss)
