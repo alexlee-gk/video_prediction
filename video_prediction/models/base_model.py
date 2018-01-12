@@ -236,7 +236,7 @@ class SoftPlacementVideoPredictionModel:
                             g_gradvars, global_step=tf.train.get_or_create_global_step())  # also increments global_step
                 else:
                     g_train_op = tf.assign_add(tf.train.get_or_create_global_step(), 1)
-            self.train_op = tf.group(d_train_op, g_train_op)
+            self.train_op = g_train_op
         else:
             self.train_op = None
 
@@ -382,7 +382,7 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
                             g_gradvars, global_step=tf.train.get_global_step())  # also increments global_step
                 else:
                     g_train_op = tf.assign_add(tf.train.get_global_step(), 1)
-            self.train_op = tf.group(d_train_op, g_train_op)
+            self.train_op = g_train_op
         else:
             self.train_op = None
 
