@@ -1,6 +1,7 @@
 import itertools
 from collections import OrderedDict
 
+import numpy as np
 import six
 import tensorflow as tf
 import tensorflow.contrib.graph_editor as ge
@@ -41,15 +42,17 @@ def local_device_setter(num_devices=1,
     return _local_device_chooser
 
 
-def replace_read_ops(loss, var_list):
+def replace_read_ops(loss_or_losses, var_list):
     """
     Replaces read ops of each variable in `vars` with new read ops obtained
     from `read_value()`, thus forcing to read the most up-to-date values of
     the variables (which might incur copies across devices).
-    The graph is seeded from the tensor `loss`.
+    The graph is seeded from the tensor(s) `loss_or_losses`.
     """
     # ops between var ops and the loss
-    ops = set(ge.get_walks_intersection_ops([var.op for var in var_list], loss.op))
+    ops = set(ge.get_walks_intersection_ops([var.op for var in var_list], loss_or_losses))
+    if not ops:  # loss_or_losses doesn't depend on any var in var_list, so there is nothiing to replace
+        return
 
     # assume that for each variable, the only op required to compute the loss
     # is a read op, and there is exactly one per variable
@@ -165,6 +168,11 @@ def _reduce_entries(*entries):
             reduced_entry = tf.add_n(entries) / tf.to_float(num_gpus)
         else:
             reduced_entry = tf.concat(entries, axis=0)
+    elif np.isscalar(entries[0]) or isinstance(entries[0], np.ndarray):
+        if np.isscalar(entries[0]) or entries[0].ndim == 0:
+            reduced_entry = sum(entries) / float(num_gpus)
+        else:
+            reduced_entry = np.concatenate(entries, axis=0)
     elif isinstance(entries[0], tuple) and len(entries[0]) == 2:
         losses, weights = zip(*entries)
         loss = tf.add_n(losses) / tf.to_float(num_gpus)
@@ -181,12 +189,15 @@ def _reduce_entries(*entries):
 
 
 def reduce_tensors(structures, shallow=False):
-    if shallow:
-        if isinstance(structures[0], dict):
-            shallow_tree = type(structures[0])([(k, None) for k in structures[0]])
-        else:
-            shallow_tree = type(structures[0])([None for _ in structures[0]])
-        reduced_structure = nest.map_structure_up_to(shallow_tree, _reduce_entries, *structures)
+    if len(structures) == 1:
+        reduced_structure = structures[0]
     else:
-        reduced_structure = nest.map_structure(_reduce_entries, *structures)
+        if shallow:
+            if isinstance(structures[0], dict):
+                shallow_tree = type(structures[0])([(k, None) for k in structures[0]])
+            else:
+                shallow_tree = type(structures[0])([None for _ in structures[0]])
+            reduced_structure = nest.map_structure_up_to(shallow_tree, _reduce_entries, *structures)
+        else:
+            reduced_structure = nest.map_structure(_reduce_entries, *structures)
     return reduced_structure

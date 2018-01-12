@@ -229,8 +229,7 @@ class SoftPlacementVideoPredictionModel:
                     d_train_op = tf.no_op()
                 if self.g_losses:
                     with tf.control_dependencies([d_train_op]):
-                        if any(self.d_losses):
-                            replace_read_ops(self.g_loss, self.d_vars)
+                        replace_read_ops(self.g_loss, self.d_vars)
                         g_gradvars = self.g_optimizer.compute_gradients(self.g_loss, var_list=self.g_vars)
                         g_train_op = self.g_optimizer.apply_gradients(
                             g_gradvars, global_step=tf.train.get_or_create_global_step())  # also increments global_step
@@ -374,9 +373,7 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
                     d_train_op = tf.no_op()
                 if any(tower_g_losses):
                     with tf.control_dependencies([d_train_op]):
-                        if any(tower_d_losses):
-                            for g_loss in tower_g_loss:
-                                replace_read_ops(g_loss, self.d_vars)
+                        replace_read_ops(tower_g_loss, self.d_vars)
                         g_gradvars = compute_averaged_gradients(self.g_optimizer, tower_g_loss, var_list=self.g_vars)
                         g_train_op = self.g_optimizer.apply_gradients(
                             g_gradvars, global_step=tf.train.get_global_step())  # also increments global_step
