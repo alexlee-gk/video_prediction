@@ -317,6 +317,7 @@ class GoogleRobotVideoDataset(VideoDataset):
         default_hparams = super(GoogleRobotVideoDataset, self).get_default_hparams_dict()
         hparams = dict(
             context_frames=2,
+            sequence_length=15,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
@@ -358,6 +359,7 @@ class SV2PVideoDataset(VideoDataset):
         elif self.dataset_name == 'humans':
             hparams = dict(
                 context_frames=10,
+                sequence_length=20,
                 use_state=False,
             )
         else:
@@ -407,6 +409,7 @@ class SoftmotionVideoDataset(VideoDataset):
         default_hparams = super(SoftmotionVideoDataset, self).get_default_hparams_dict()
         hparams = dict(
             context_frames=2,
+            sequence_length=15,
             time_shift=2,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
