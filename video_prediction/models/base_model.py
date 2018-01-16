@@ -60,8 +60,15 @@ class SoftPlacementVideoPredictionModel:
         self.discriminator_scope = discriminator_scope
         self.discriminator_encoder_scope = discriminator_encoder_scope
 
-        self.g_optimizer = tf.train.AdamOptimizer(self.hparams.lr, self.hparams.beta1, self.hparams.beta2)
-        self.d_optimizer = tf.train.AdamOptimizer(self.hparams.lr, self.hparams.beta1, self.hparams.beta2)
+        if any(self.hparams.decay_steps):
+            lr, end_lr = self.hparams.lr, self.hparams.end_lr
+            decay_step, end_decay_step = self.hparams.decay_steps
+            step = tf.clip_by_value(tf.train.get_or_create_global_step(), decay_step, end_decay_step)
+            self.learning_rate = lr + (end_lr - lr) * tf.to_float(step - decay_step) / tf.to_float(end_decay_step - decay_step)
+        else:
+            self.learning_rate = self.hparams.lr
+        self.g_optimizer = tf.train.AdamOptimizer(self.learning_rate, self.hparams.beta1, self.hparams.beta2)
+        self.d_optimizer = tf.train.AdamOptimizer(self.learning_rate, self.hparams.beta1, self.hparams.beta2)
 
         # member variables that should be set by `self.build_graph`
         self.inputs = None
@@ -83,10 +90,27 @@ class SoftPlacementVideoPredictionModel:
         The keys of this dict define valid hyperparameters for instances of
         this class. A class inheriting from this one should override this
         method if it has a different set of hyperparameters.
+
+        Returns:
+            A dict with the following hyperparameters.
+
+            context_frames: the number of ground-truth frames to pass in at
+                start. Must be specified during instantiation.
+            sequence_length: the number of frames in the video sequence,
+                including the context frames, so this model predicts
+                `sequence_length - context_frames` future frames. Must be
+                specified during instantiation.
+            lr: learning rate. if decay steps is non-zero, this is the
+                learning rate for steps <= decay_step.
+            end_lr: learning rate for steps >= end_decay_step if decay_steps
+                is non-zero, ignored otherwise.
+            decay_steps: (decay_step, end_decay_step) tuple.
+            beta1: momentum term of Adam.
+            beta2: momentum term of Adam.
         """
         hparams = dict(
-            context_frames=0,  # should be specified in init
-            sequence_length=0,  # should be specified in init
+            context_frames=0,
+            sequence_length=0,
             l1_weight=0.0,
             l2_weight=1.0,
             state_weight=1e-4,
@@ -99,6 +123,8 @@ class SoftPlacementVideoPredictionModel:
             kl_anneal_k=-1.0,
             z_l1_weight=0.0,
             lr=0.001,
+            end_lr=0.0,
+            decay_steps=(0, 0),
             beta1=0.9,
             beta2=0.999,
         )
