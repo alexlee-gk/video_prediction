@@ -1,8 +1,6 @@
 import numpy as np
 import tensorflow as tf
 
-from video_prediction.ops import flatten
-
 
 def peak_signal_to_noise_ratio_np(true, pred, axis=None):
     return 10.0 * np.log(1.0 / mean_squared_error_np(true, pred, axis=axis)) / np.log(10.0)
@@ -83,48 +81,51 @@ def structural_similarity(true, pred, k1=0.01, k2=0.03, kernel_size=7, data_rang
     Reference:
         https://github.com/scikit-image/scikit-image/blob/master/skimage/measure/_structural_similarity.py
     """
-    if true.shape.ndims > 4:
-        true = flatten(true, 0, true.shape.ndims - 4)
-    if pred.shape.ndims > 4:
-        pred = flatten(pred, 0, pred.shape.ndims - 4)
+    if true.shape.ndims == 4 and pred.shape.ndims == 4:
+        channels = pred.get_shape().as_list()[-1]
+        c1 = (k1 * data_range) ** 2
+        c2 = (k2 * data_range) ** 2
+        # compute patches independently per channel as in the reference implementation
+        patches_true = []
+        patches_pred = []
+        for true_single_channel, pred_single_channel in zip(tf.split(true, channels, axis=-1),
+                                                            tf.split(pred, channels, axis=-1)):
+            # use no padding (i.e. valid padding) so we don't compute values near the borders.
+            patches_true_single_channel = \
+                tf.extract_image_patches(true_single_channel, [1] + [kernel_size] * 2 + [1],
+                                         strides=[1] * 4, rates=[1] * 4, padding="VALID")
+            patches_pred_single_channel = \
+                tf.extract_image_patches(pred_single_channel, [1] + [kernel_size] * 2 + [1],
+                                         strides=[1] * 4, rates=[1] * 4, padding="VALID")
+            patches_true.append(patches_true_single_channel)
+            patches_pred.append(patches_pred_single_channel)
+        patches_true = tf.stack(patches_true, axis=-2)
+        patches_pred = tf.stack(patches_pred, axis=-2)
 
-    channels = pred.get_shape().as_list()[-1]
-    c1 = (k1 * data_range) ** 2
-    c2 = (k2 * data_range) ** 2
-    # compute patches independently per channel as in the reference implementation
-    patches_true = []
-    patches_pred = []
-    for true_single_channel, pred_single_channel in zip(tf.split(true, channels, axis=-1),
-                                                        tf.split(pred, channels, axis=-1)):
-        # use no padding (i.e. valid padding) so we don't compute values near the borders.
-        patches_true_single_channel = \
-            tf.extract_image_patches(true_single_channel, [1] + [kernel_size] * 2 + [1],
-                                     strides=[1] * 4, rates=[1] * 4, padding="VALID")
-        patches_pred_single_channel = \
-            tf.extract_image_patches(pred_single_channel, [1] + [kernel_size] * 2 + [1],
-                                     strides=[1] * 4, rates=[1] * 4, padding="VALID")
-        patches_true.append(patches_true_single_channel)
-        patches_pred.append(patches_pred_single_channel)
-    patches_true = tf.stack(patches_true, axis=-2)
-    patches_pred = tf.stack(patches_pred, axis=-2)
+        mean_true, var_true = tf.nn.moments(patches_true, axes=[-1])
+        mean_pred, var_pred = tf.nn.moments(patches_pred, axes=[-1])
+        cov_true_pred = tf.reduce_mean(patches_true * patches_pred, axis=-1) - mean_true * mean_pred
 
-    mean_true, var_true = tf.nn.moments(patches_true, axes=[-1])
-    mean_pred, var_pred = tf.nn.moments(patches_pred, axes=[-1])
-    cov_true_pred = tf.reduce_mean(patches_true * patches_pred, axis=-1) - mean_true * mean_pred
+        if use_sample_covariance:
+            NP = kernel_size ** (len(true.shape) - 2)  # substract batch and channel dimensions
+            cov_norm = NP / (NP - 1)  # sample covariance
+        else:
+            cov_norm = 1.0  # population covariance to match Wang et. al. 2004
+        var_true *= cov_norm
+        var_pred *= cov_norm
+        cov_true_pred *= cov_norm
 
-    if use_sample_covariance:
-        NP = kernel_size ** (len(true.shape) - 2)  # substract batch and channel dimensions
-        cov_norm = NP / (NP - 1)  # sample covariance
+        ssim = (2 * mean_true * mean_pred + c1) * (2 * cov_true_pred + c2)
+        denom = (tf.square(mean_true) + tf.square(mean_pred) + c1) * (var_pred + var_true + c2)
+        ssim /= denom
+        ssim = tf.reduce_mean(ssim)
     else:
-        cov_norm = 1.0  # population covariance to match Wang et. al. 2004
-    var_true *= cov_norm
-    var_pred *= cov_norm
-    cov_true_pred *= cov_norm
-
-    ssim = (2 * mean_true * mean_pred + c1) * (2 * cov_true_pred + c2)
-    denom = (tf.square(mean_true) + tf.square(mean_pred) + c1) * (var_pred + var_true + c2)
-    ssim /= denom
-    return tf.reduce_mean(ssim)
+        kwargs = dict(k1=k1, k2=k2, kernel_size=kernel_size, data_range=data_range,
+                      use_sample_covariance=use_sample_covariance)
+        ssim = tf.map_fn(lambda args: structural_similarity(*args, **kwargs),
+                         (true, pred), dtype=tf.float32, back_prop=False)
+        ssim = tf.reduce_mean(ssim)
+    return ssim
 
 
 def main():
