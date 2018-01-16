@@ -4,6 +4,7 @@ from collections import OrderedDict
 import tensorflow as tf
 
 from video_prediction import ops
+from video_prediction import tf_utils
 from video_prediction.models import VideoPredictionModel
 from video_prediction.ops import conv2d, lrelu
 
@@ -215,11 +216,17 @@ def create_discriminator(discrim_targets, discrim_inputs=None,
 
 
 class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
-    def __init__(self, image_shape, hparams, reuse=None):
+    def __init__(self, image_shape, action_shape, hparams, reuse=None):
         super(Pix2PixCell, self).__init__(_reuse=reuse)
         self.image_shape = image_shape
+        self.action_shape = action_shape
         self.hparams = hparams
-        self._output_size = tf.TensorShape(self.image_shape)  # gen_image
+        if action_shape is not None:
+            gen_input_shape = list(self.image_shape[:-1]) + [self.image_shape[-1] + self.action_shape[-1]]
+        else:
+            gen_input_shape = self.image_shape
+        self._output_size = (tf.TensorShape(self.image_shape),  # gen_image
+                             tf.TensorShape(gen_input_shape))  # gen_input
         self._state_size = (tf.TensorShape([]),  # time
                             tf.TensorShape(self.image_shape))  # gen_image
 
@@ -233,7 +240,7 @@ class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
 
     def call(self, inputs, states):
         image = inputs['images']
-        action = inputs.get('action')
+        action = inputs.get('actions')
         time, gen_image = states
 
         done_warm_start = tf.greater(time, self.hparams.context_frames - 1)
@@ -241,39 +248,41 @@ class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
                         lambda: gen_image,  # feed in generated image
                         lambda: image)  # feed in ground_truth
         if action is not None:
-            generator_inputs = ops.tile_concat(image, action[:, None, None, :], axis=-1)
+            gen_input = ops.tile_concat([image, action[:, None, None, :]], axis=-1)
         else:
-            generator_inputs = image
-        gen_image = create_generator(generator_inputs,
+            gen_input = image
+        gen_image = create_generator(gen_input,
                                      output_nc=self.hparams.output_nc,
                                      ngf=self.hparams.ngf,
                                      norm_layer=self.hparams.norm_layer,
                                      downsample_layer=self.hparams.downsample_layer,
                                      upsample_layer=self.hparams.upsample_layer)
+        outputs = (gen_image, gen_input)
         new_states = (time + 1, gen_image)
-        return gen_image, new_states
+        return outputs, new_states
 
 
 def generator_fn(inputs, hparams=None):
     _, batch_size, *image_shape = inputs['images'].shape.as_list()
-    cell = Pix2PixCell(image_shape, hparams)
-    time_slice = slice(0, hparams.sequence_length - 1)
-    inputs = OrderedDict([(name, input[time_slice]) for name, input in inputs.items()
-                          if name in ('images', 'actions')])
-    gen_images, _ = tf.nn.dynamic_rnn(cell, inputs, sequence_length=[hparams.sequence_length - 1] * batch_size,
-                                      dtype=tf.float32, swap_memory=False, time_major=True)
+    if 'actions' in inputs:
+        _, _, *action_shape = inputs['actions'].shape.as_list()
+    else:
+        action_shape = None
+    cell = Pix2PixCell(image_shape, action_shape, hparams)
+    inputs = OrderedDict([(name, tf_utils.maybe_pad_or_slice(input, hparams.sequence_length - 1))
+                          for name, input in inputs.items() if name in ('images', 'actions')])
+    (gen_images, gen_inputs), _ = \
+        tf.nn.dynamic_rnn(cell, inputs, sequence_length=[hparams.sequence_length - 1] * batch_size,
+                          dtype=tf.float32, swap_memory=False, time_major=True)
     # the RNN outputs generated images from time step 1 to sequence_length,
     # but generator_fn should only return images past context_frames
     gen_images = gen_images[hparams.context_frames - 1:]
-    return gen_images, {'gen_images': gen_images}
+    gen_inputs = gen_inputs[hparams.context_frames - 1:]
+    return gen_images, {'gen_images': gen_images, 'gen_inputs': gen_inputs}
 
 
 def discriminator_fn(targets, inputs=None, hparams=None):
     if targets.shape.ndims == 4:
-        if 'actions' in inputs:
-            inputs = ops.tile_concat([inputs['images'], inputs['actions'][:, None, None, :]], axis=-1)
-        else:
-            inputs = inputs['images']
         logits = create_discriminator(targets, inputs,
                                       ndf=hparams.ndf,
                                       norm_layer=hparams.norm_layer,
@@ -282,10 +291,7 @@ def discriminator_fn(targets, inputs=None, hparams=None):
         if inputs is None:
             targets_and_inputs = (targets,)
         else:
-            time_slice = slice(hparams.context_frames - 1, hparams.sequence_length - 1)
-            inputs = OrderedDict([(name, input[time_slice]) for name, input in inputs.items()
-                                  if name in ('images', 'actions')])
-            targets_and_inputs = (targets, inputs)
+            targets_and_inputs = (targets, inputs['gen_inputs'])
         logits = tf.map_fn(lambda args: discriminator_fn(*args, hparams=hparams)[0],
                            targets_and_inputs,
                            dtype=tf.float32, swap_memory=False)

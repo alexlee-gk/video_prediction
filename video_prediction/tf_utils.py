@@ -90,6 +90,17 @@ def print_loss_info(losses, inputs, outputs, targets):
             print('    %s' % tensor_to_names[descendant])
 
 
+def maybe_pad_or_slice(tensor, desired_length):
+    length = tensor.shape.as_list()[0]
+    if length < desired_length:
+        paddings = [[0, desired_length - length]] + [[0, 0]] * (tensor.shape.ndims - 1)
+        tensor = tf.pad(tensor, paddings)
+    elif length > desired_length:
+        tensor = tensor[:desired_length]
+    assert tensor.shape.as_list()[0] == desired_length
+    return tensor
+
+
 def tensor_to_clip(tensor):
     if tensor.shape.ndims == 6:
         # concatenate last dimension vertically
@@ -98,6 +109,8 @@ def tensor_to_clip(tensor):
         # concatenate batch dimension horizontally
         tensor = tf.concat(tf.unstack(tensor, axis=0), axis=2)
     if tensor.shape.ndims == 4:
+        # keep up to the first 3 channels
+        tensor = tensor[..., :3]
         tensor = tf.image.convert_image_dtype(tensor, dtype=tf.uint8, saturate=True)
     else:
         raise NotImplementedError
@@ -112,6 +125,8 @@ def tensor_to_image_batch(tensor):
         # concatenate time dimension horizontally
         tensor = tf.concat(tf.unstack(tensor, axis=1), axis=2)
     if tensor.shape.ndims == 4:
+        # keep up to the first 3 channels
+        tensor = tensor[..., :3]
         tensor = tf.image.convert_image_dtype(tensor, dtype=tf.uint8, saturate=True)
     else:
         raise NotImplementedError
