@@ -252,11 +252,12 @@ class VideoDataset:
 
         # Potentially shuffle records.
         if self.mode == 'train':
-            min_queue_examples = int(
-                self.num_examples_per_epoch() * 0.4)
-            # Ensure that the capacity is sufficiently large to provide good random
-            # shuffling.
-            dataset = dataset.shuffle(buffer_size=min_queue_examples + 3 * batch_size)
+            # min_queue_examples = int(
+            #     self.num_examples_per_epoch() * 0.4)
+            # # Ensure that the capacity is sufficiently large to provide good random
+            # # shuffling.
+            # dataset = dataset.shuffle(buffer_size=min_queue_examples + 3 * batch_size)
+            dataset = dataset.shuffle(buffer_size=4096)
 
         dataset = _FixedBatchDataset(dataset, batch_size)
         iterator = dataset.make_one_shot_iterator()
