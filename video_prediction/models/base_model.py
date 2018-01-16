@@ -216,10 +216,13 @@ class SoftPlacementVideoPredictionModel:
             with tf.name_scope("generator_loss"):
                 g_losses = self.generator_loss_fn(inputs, outputs, targets)
                 print_loss_info(g_losses, inputs, outputs, targets)
-                outputs_post = OrderedDict(itertools.chain(outputs.items(),
-                                                           discrim_outputs_fake_post.items(),
-                                                           discrim_outputs_enc_fake_post.items()))
-                g_losses_post = self.generator_loss_fn(inputs, outputs_post, targets)
+                if discrim_outputs_fake_post or discrim_outputs_enc_fake_post:
+                    outputs_post = OrderedDict(itertools.chain(outputs.items(),
+                                                               discrim_outputs_fake_post.items(),
+                                                               discrim_outputs_enc_fake_post.items()))
+                    g_losses_post = self.generator_loss_fn(inputs, outputs_post, targets)
+                else:
+                    g_losses_post = g_losses
             with tf.name_scope("metrics"):
                 metrics = self.metrics_fn(inputs, outputs, targets)
         else:
@@ -238,6 +241,9 @@ class SoftPlacementVideoPredictionModel:
     def build_graph(self, inputs, targets=None):
         self.inputs = inputs
         self.targets = targets
+
+        global_step = tf.train.get_or_create_global_step()
+
         outputs_tuple, losses_tuple, metrics = self.tower_fn(self.inputs, self.targets)
         self.gen_images, self.gen_images_enc, self.outputs = outputs_tuple
         self.d_losses, self.g_losses, g_losses_post = losses_tuple
@@ -256,14 +262,14 @@ class SoftPlacementVideoPredictionModel:
                     d_train_op = self.d_optimizer.apply_gradients(d_gradvars)
                 else:
                     d_train_op = tf.no_op()
-                if g_losses_post:
-                    with tf.control_dependencies([d_train_op]):
+                with tf.control_dependencies([d_train_op]):
+                    if g_losses_post:
                         replace_read_ops(g_loss_post, self.d_vars)
                         g_gradvars = self.g_optimizer.compute_gradients(g_loss_post, var_list=self.g_vars)
                         g_train_op = self.g_optimizer.apply_gradients(
-                            g_gradvars, global_step=tf.train.get_or_create_global_step())  # also increments global_step
-                else:
-                    g_train_op = tf.assign_add(tf.train.get_or_create_global_step(), 1)
+                            g_gradvars, global_step=global_step)  # also increments global_step
+                    else:
+                        g_train_op = tf.assign_add(global_step, 1)
             self.train_op = g_train_op
         else:
             self.train_op = None
@@ -361,6 +367,9 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
     def build_graph(self, inputs, targets=None):
         self.inputs = inputs
         self.targets = targets
+
+        global_step = tf.train.get_or_create_global_step()
+
         tower_inputs = [OrderedDict() for _ in range(self.num_gpus)]
         for name, input in self.inputs.items():
             input_splits = tf.split(input, self.num_gpus)  # assumes batch_size is divisible by num_gpus
@@ -406,14 +415,14 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
                     d_train_op = self.d_optimizer.apply_gradients(d_gradvars)
                 else:
                     d_train_op = tf.no_op()
-                if any(tower_g_losses_post):
-                    with tf.control_dependencies([d_train_op]):
+                with tf.control_dependencies([d_train_op]):
+                    if any(tower_g_losses_post):
                         replace_read_ops(tower_g_loss_post, self.d_vars)
                         g_gradvars = compute_averaged_gradients(self.g_optimizer, tower_g_loss_post, var_list=self.g_vars)
                         g_train_op = self.g_optimizer.apply_gradients(
-                            g_gradvars, global_step=tf.train.get_global_step())  # also increments global_step
-                else:
-                    g_train_op = tf.assign_add(tf.train.get_global_step(), 1)
+                            g_gradvars, global_step=global_step)  # also increments global_step
+                    else:
+                        g_train_op = tf.assign_add(global_step, 1)
             self.train_op = g_train_op
         else:
             self.train_op = None
