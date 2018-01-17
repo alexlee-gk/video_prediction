@@ -8,7 +8,7 @@ from tensorflow.python.util import nest
 
 import video_prediction as vp
 from video_prediction.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
-    replace_read_ops, print_loss_info, add_image_or_scalar_summaries, add_scalar_summaries
+    replace_read_ops, print_loss_info, add_image_summaries, add_scalar_summaries, add_image_or_scalar_summaries
 
 
 class SoftPlacementVideoPredictionModel:
@@ -275,6 +275,8 @@ class SoftPlacementVideoPredictionModel:
         else:
             self.train_op = None
 
+        add_image_summaries({name: tensor for name, tensor in self.inputs.items() if tensor.shape.ndims >= 4})
+        add_image_summaries({'targets': self.targets})
         add_image_or_scalar_summaries(self.outputs)
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
@@ -438,6 +440,8 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
             self.d_loss = reduce_tensors(tower_d_loss)
             self.g_loss = reduce_tensors(tower_g_loss)
 
+        add_image_summaries({name: tensor for name, tensor in self.inputs.items() if tensor.shape.ndims >= 4})
+        add_image_summaries({'targets': self.targets})
         add_image_or_scalar_summaries(self.outputs)
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
