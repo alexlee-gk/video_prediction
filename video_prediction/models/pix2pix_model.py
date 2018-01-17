@@ -294,8 +294,10 @@ class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
         else:
             # Scheduled sampling
             k = self.hparams.schedule_sampling_k
+            start_step = self.hparams.schedule_sampling_start_step
             iter_num = tf.to_float(tf.train.get_or_create_global_step())
-            prob = (k / (k + tf.exp(iter_num / k)))
+            prob = (k / (k + tf.exp((iter_num - start_step) / k)))
+            prob = tf.cond(tf.less(iter_num, start_step), lambda: 1.0, lambda: prob)
             log_probs = tf.log([1 - prob, prob])
             ground_truth_sampling = tf.multinomial([log_probs] * batch_size, ground_truth_sampling_shape[0])
             ground_truth_sampling = tf.cast(tf.transpose(ground_truth_sampling, [1, 0]), dtype=tf.bool)
@@ -391,6 +393,7 @@ class Pix2PixVideoPredictionModel(VideoPredictionModel):
             d_downsample_layer='conv_pool2d',
             downsample_layer='conv_pool2d',
             upsample_layer='upsample_conv2d',
+            schedule_sampling_start_step=0,
             schedule_sampling_k=900.0,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
