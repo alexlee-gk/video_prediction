@@ -142,6 +142,7 @@ def create_generator(generator_inputs,
         else:
             output = upsample_layer(rectified, out_channels, kernel_size=4, strides=strides)
         output = tf.tanh(output)
+        output = (output + 1) / 2
         layers.append(output)
 
     return layers[-1]
