@@ -77,13 +77,13 @@ def create_generator(generator_inputs,
 
     if scale_size == 256:
         layer_specs = [
-            (ngf * 8, 2, 0.5),                   # decoder_8: [batch, 1, 1, ngf * 8] => [batch, 2, 2, ngf * 8 * 2]
-            (ngf * 8, 2, 0.5),                   # decoder_7: [batch, 2, 2, ngf * 8 * 2] => [batch, 4, 4, ngf * 8 * 2]
-            (ngf * 8, 2, 0.5),                   # decoder_6: [batch, 4, 4, ngf * 8 * 2] => [batch, 8, 8, ngf * 8 * 2]
-            (ngf * 8, 2, 0.0),                   # decoder_5: [batch, 8, 8, ngf * 8 * 2] => [batch, 16, 16, ngf * 8 * 2]
-            (ngf * 4, 2, 0.0),                   # decoder_4: [batch, 16, 16, ngf * 8 * 2] => [batch, 32, 32, ngf * 4 * 2]
-            (ngf * 2, 2, 0.0),                   # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
-            (ngf, 2, 0.0),                       # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
+            (ngf * 8, 2, 0.5),    # decoder_8: [batch, 1, 1, ngf * 8] => [batch, 2, 2, ngf * 8 * 2]
+            (ngf * 8, 2, 0.5),    # decoder_7: [batch, 2, 2, ngf * 8 * 2] => [batch, 4, 4, ngf * 8 * 2]
+            (ngf * 8, 2, 0.5),    # decoder_6: [batch, 4, 4, ngf * 8 * 2] => [batch, 8, 8, ngf * 8 * 2]
+            (ngf * 8, 2, 0.0),    # decoder_5: [batch, 8, 8, ngf * 8 * 2] => [batch, 16, 16, ngf * 8 * 2]
+            (ngf * 4, 2, 0.0),    # decoder_4: [batch, 16, 16, ngf * 8 * 2] => [batch, 32, 32, ngf * 4 * 2]
+            (ngf * 2, 2, 0.0),    # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
+            (ngf, 2, 0.0),        # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
             (output_nc, 2, 0.0),  # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
         ]
     elif scale_size == 128:
@@ -216,19 +216,37 @@ def create_discriminator(discrim_targets, discrim_inputs=None,
 
 
 class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
-    def __init__(self, image_shape, action_shape, hparams, reuse=None):
+    def __init__(self, inputs, hparams, reuse=None):
         super(Pix2PixCell, self).__init__(_reuse=reuse)
-        self.image_shape = image_shape
-        self.action_shape = action_shape
+        self.inputs = inputs
         self.hparams = hparams
-        if action_shape is not None:
-            gen_input_shape = list(self.image_shape[:-1]) + [self.image_shape[-1] + self.action_shape[-1]]
+        _, batch_size, *image_shape = inputs['images'].shape.as_list()
+        if 'actions' in inputs:
+            _, _, *action_shape = inputs['actions'].shape.as_list()
+            gen_input_shape = list(image_shape[:-1]) + [image_shape[-1] + action_shape[-1]]
         else:
-            gen_input_shape = self.image_shape
-        self._output_size = (tf.TensorShape(self.image_shape),  # gen_image
+            gen_input_shape = image_shape
+        self._output_size = (tf.TensorShape(image_shape),  # gen_image
                              tf.TensorShape(gen_input_shape))  # gen_input
         self._state_size = (tf.TensorShape([]),  # time
-                            tf.TensorShape(self.image_shape))  # gen_image
+                            tf.TensorShape(image_shape))  # gen_image
+
+        if self.hparams.schedule_sampling_k == -1:
+            self.ground_truth_conds = tf.constant(False)
+        else:
+            # Scheduled sampling
+            k = self.hparams.schedule_sampling_k
+            iter_num = tf.to_float(tf.train.get_or_create_global_step())
+            prob = (k / (k + tf.exp(iter_num / k)))
+            log_probs = tf.log([1 - prob, prob])
+            ground_truth_conds = tf.multinomial([log_probs] * batch_size,
+                                                self.hparams.sequence_length - self.hparams.context_frames)
+            ground_truth_conds = tf.cast(tf.transpose(ground_truth_conds, [1, 0]), dtype=tf.bool)
+            # Ensure that eventually, the model is deterministically
+            # autoregressive (as opposed to autoregressive with very high probability).
+            self.ground_truth_conds = tf.cond(tf.less(prob, 0.001),
+                                              lambda: tf.constant(False, shape=ground_truth_conds.shape),
+                                              lambda: ground_truth_conds)
 
     @property
     def output_size(self):
@@ -240,14 +258,23 @@ class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
 
     def call(self, inputs, states):
         image = inputs['images']
-        action = inputs.get('actions')
         time, gen_image = states
 
-        done_warm_start = tf.greater(time, self.hparams.context_frames - 1)
-        image = tf.cond(tf.reduce_all(done_warm_start),
-                        lambda: gen_image,  # feed in generated image
-                        lambda: image)  # feed in ground_truth
-        if action is not None:
+        with tf.control_dependencies([tf.assert_equal(time[1:], time[0])]):
+            t = tf.identity(time[0])
+            t = tf.to_int32(t)
+        done_warm_start = tf.greater_equal(t, self.hparams.context_frames)
+        if self.hparams.schedule_sampling_k == -1:
+            image = tf.cond(done_warm_start,
+                            lambda: gen_image,  # feed in generated image
+                            lambda: image)  # feed in ground_truth
+        else:
+            ground_truth_cond = self.ground_truth_conds[t - self.hparams.context_frames]
+            image = tf.cond(done_warm_start,
+                            lambda: tf.where(ground_truth_cond, image, gen_image),  # schedule sampling
+                            lambda: image)  # feed in ground_truth
+        if 'actions' in inputs:
+            action = inputs['actions']
             gen_input = ops.tile_concat([image, action[:, None, None, :]], axis=-1)
         else:
             gen_input = image
@@ -263,12 +290,8 @@ class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
 
 
 def generator_fn(inputs, hparams=None):
-    _, batch_size, *image_shape = inputs['images'].shape.as_list()
-    if 'actions' in inputs:
-        _, _, *action_shape = inputs['actions'].shape.as_list()
-    else:
-        action_shape = None
-    cell = Pix2PixCell(image_shape, action_shape, hparams)
+    batch_size = inputs['images'].shape.as_list()[1]
+    cell = Pix2PixCell(inputs, hparams)
     inputs = OrderedDict([(name, tf_utils.maybe_pad_or_slice(input, hparams.sequence_length - 1))
                           for name, input in inputs.items() if name in ('images', 'actions')])
     (gen_images, gen_inputs), _ = \
@@ -277,8 +300,8 @@ def generator_fn(inputs, hparams=None):
     # the RNN outputs generated images from time step 1 to sequence_length,
     # but generator_fn should only return images past context_frames
     gen_images = gen_images[hparams.context_frames - 1:]
-    gen_inputs = gen_inputs[hparams.context_frames - 1:]
-    return gen_images, {'gen_images': gen_images, 'gen_inputs': gen_inputs}
+    return gen_images, {'gen_images': gen_images, 'gen_inputs': gen_inputs,
+                        'ground_truth_conds_mean': tf.reduce_mean(tf.to_float(cell.ground_truth_conds))}
 
 
 def discriminator_fn(targets, inputs=None, hparams=None):
@@ -312,5 +335,6 @@ class Pix2PixVideoPredictionModel(VideoPredictionModel):
             norm_layer='instance',
             downsample_layer='conv_pool2d',
             upsample_layer='upsample_conv2d',
+            schedule_sampling_k=900.0,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))

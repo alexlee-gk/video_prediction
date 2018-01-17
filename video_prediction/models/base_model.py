@@ -8,7 +8,7 @@ from tensorflow.python.util import nest
 
 import video_prediction as vp
 from video_prediction.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
-    replace_read_ops, print_loss_info, add_image_summaries, add_scalar_summaries
+    replace_read_ops, print_loss_info, add_image_or_scalar_summaries, add_scalar_summaries
 
 
 class SoftPlacementVideoPredictionModel:
@@ -141,9 +141,10 @@ class SoftPlacementVideoPredictionModel:
         """
         # batch-major to time-major
         def transpose_batch_time(x):
-            if x is None:
-                return None
-            return tf.transpose(x, [1, 0] + list(range(2, x.shape.ndims)))
+            if isinstance(x, tf.Tensor) and x.shape.ndims >= 2:
+                return tf.transpose(x, [1, 0] + list(range(2, x.shape.ndims)))
+            else:
+                return x
         inputs, targets = nest.map_structure(transpose_batch_time, (inputs, targets))
 
         with tf.variable_scope(self.generator_scope) as gen_scope:
@@ -274,7 +275,7 @@ class SoftPlacementVideoPredictionModel:
         else:
             self.train_op = None
 
-        add_image_summaries(self.outputs)
+        add_image_or_scalar_summaries(self.outputs)
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
         add_scalar_summaries(self.metrics)
@@ -437,7 +438,7 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
             self.d_loss = reduce_tensors(tower_d_loss)
             self.g_loss = reduce_tensors(tower_g_loss)
 
-        add_image_summaries(self.outputs)
+        add_image_or_scalar_summaries(self.outputs)
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
         add_scalar_summaries(self.metrics)

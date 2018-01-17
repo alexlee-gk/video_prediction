@@ -147,6 +147,18 @@ def add_scalar_summaries(losses_or_metrics):
             tf.summary.scalar(name, loss_or_metric)
 
 
+def add_image_or_scalar_summaries(outputs):
+    image_outputs = OrderedDict()
+    scalar_outputs = OrderedDict()
+    for name, output in outputs.items():
+        if output.shape.ndims == 0:
+            scalar_outputs[name] = output
+        else:
+            image_outputs[name] = output
+    add_image_summaries(image_outputs)
+    add_scalar_summaries(scalar_outputs)
+
+
 def compute_averaged_gradients(opt, tower_loss, **kwargs):
     tower_gradvars = []
     for loss in tower_loss:
