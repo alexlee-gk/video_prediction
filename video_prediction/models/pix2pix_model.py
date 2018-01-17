@@ -369,7 +369,7 @@ def discriminator_fn(targets, inputs=None, hparams=None):
                                       n_layers=hparams.n_layers,
                                       ndf=hparams.ndf,
                                       norm_layer=hparams.norm_layer,
-                                      downsample_layer=hparams.downsample_layer)
+                                      downsample_layer=hparams.d_downsample_layer)
     else:
         if inputs is None:
             targets_and_inputs = (targets,)
@@ -395,6 +395,7 @@ class Pix2PixVideoPredictionModel(VideoPredictionModel):
             ngf=64,
             ndf=64,
             norm_layer='instance',
+            d_downsample_layer='conv_pool2d',
             downsample_layer='conv_pool2d',
             upsample_layer='upsample_conv2d',
             schedule_sampling_k=900.0,
