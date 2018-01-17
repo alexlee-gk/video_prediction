@@ -258,11 +258,14 @@ def create_n_layer_discriminator(discrim_targets, discrim_inputs=None,
 
 def create_discriminator(discrim_targets, discrim_inputs=None, d_net='s_layer', **kwargs):
     if d_net == 's_layer':
+        kwargs.pop('n_layers', None)  # unused
         logits = create_s_layer_discriminator(discrim_targets, discrim_inputs, **kwargs)
     elif d_net == 'n_layer':
-        scale_size = min(*discrim_targets.shape.as_list()[1:3])
-        n_layers = int(np.log2(scale_size // 32))
         kwargs.pop('downsample_layer', None)  # unused
+        n_layers = kwargs.pop('n_layers', None)
+        if not n_layers:
+            scale_size = min(*discrim_targets.shape.as_list()[1:3])
+            n_layers = int(np.log2(scale_size // 32))
         logits = create_n_layer_discriminator(discrim_targets, discrim_inputs, n_layers=n_layers, **kwargs)
     else:
         raise NotImplementedError
@@ -363,6 +366,7 @@ def discriminator_fn(targets, inputs=None, hparams=None):
     if targets.shape.ndims == 4:
         logits = create_discriminator(targets, inputs,
                                       d_net=hparams.d_net,
+                                      n_layers=hparams.n_layers,
                                       ndf=hparams.ndf,
                                       norm_layer=hparams.norm_layer,
                                       downsample_layer=hparams.downsample_layer)
@@ -386,6 +390,7 @@ class Pix2PixVideoPredictionModel(VideoPredictionModel):
         default_hparams = super(Pix2PixVideoPredictionModel, self).get_default_hparams_dict()
         hparams = dict(
             d_net='s_layer',
+            n_layers=0,
             output_nc=3,
             ngf=64,
             ndf=64,
