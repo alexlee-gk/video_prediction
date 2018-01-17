@@ -301,6 +301,7 @@ def generator_fn(inputs, hparams=None):
     # the RNN outputs generated images from time step 1 to sequence_length,
     # but generator_fn should only return images past context_frames
     gen_images = gen_images[hparams.context_frames - 1:]
+    gen_inputs = gen_inputs[hparams.context_frames - 1:]
     return gen_images, {'gen_images': gen_images, 'gen_inputs': gen_inputs,
                         'ground_truth_conds_mean': tf.reduce_mean(tf.to_float(cell.ground_truth_conds))}
 
