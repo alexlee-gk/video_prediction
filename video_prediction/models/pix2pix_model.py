@@ -1,6 +1,7 @@
 import itertools
 from collections import OrderedDict
 
+import numpy as np
 import tensorflow as tf
 
 from video_prediction import ops
@@ -148,10 +149,10 @@ def create_generator(generator_inputs,
     return layers[-1]
 
 
-def create_discriminator(discrim_targets, discrim_inputs=None,
-                         ndf=64,
-                         norm_layer='instance',
-                         downsample_layer='conv_pool2d'):
+def create_s_layer_discriminator(discrim_targets, discrim_inputs=None,
+                                 ndf=64,
+                                 norm_layer='instance',
+                                 downsample_layer='conv_pool2d'):
     norm_layer = ops.get_norm_layer(norm_layer)
     downsample_layer = ops.get_downsample_layer(downsample_layer)
 
@@ -214,6 +215,58 @@ def create_discriminator(discrim_targets, discrim_inputs=None,
         layers.append(logits)  # don't apply sigmoid to the logits in case we want to use LSGAN
 
     return layers[-1]
+
+
+def create_n_layer_discriminator(discrim_targets, discrim_inputs=None,
+                                 ndf=64,
+                                 n_layers=3,
+                                 norm_layer='instance'):
+    norm_layer = ops.get_norm_layer(norm_layer)
+
+    layers = []
+    inputs = [discrim_targets]
+    if discrim_inputs is not None:
+        inputs.append(discrim_inputs)
+    inputs = tf.concat(inputs, axis=-1)
+
+    paddings = [[0, 0], [1, 1], [1, 1], [0, 0]]
+
+    # layer_1: [batch, 256, 256, in_channels * 2] => [batch, 128, 128, ndf]
+    with tf.variable_scope("layer_1"):
+        convolved = conv2d(tf.pad(inputs, paddings), ndf, kernel_size=4, strides=2, padding='VALID')
+        rectified = lrelu(convolved, 0.2)
+        layers.append(rectified)
+
+    # layer_2: [batch, 128, 128, ndf] => [batch, 64, 64, ndf * 2]
+    # layer_3: [batch, 64, 64, ndf * 2] => [batch, 32, 32, ndf * 4]
+    # layer_4: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
+    for i in range(n_layers):
+        with tf.variable_scope("layer_%d" % (len(layers) + 1)):
+            out_channels = ndf * min(2**(i+1), 8)
+            stride = 1 if i == n_layers - 1 else 2  # last layer here has stride 1
+            convolved = conv2d(tf.pad(layers[-1], paddings), out_channels, kernel_size=4, strides=stride, padding='VALID')
+            normalized = norm_layer(convolved)
+            rectified = lrelu(normalized, 0.2)
+            layers.append(rectified)
+
+    # layer_5: [batch, 31, 31, ndf * 8] => [batch, 30, 30, 1]
+    with tf.variable_scope("layer_%d" % (len(layers) + 1)):
+        logits = conv2d(tf.pad(rectified, paddings), 1, kernel_size=4, strides=1, padding='VALID')
+        layers.append(logits)  # don't apply sigmoid to the logits in case we want to use LSGAN
+    return layers[-1]
+
+
+def create_discriminator(discrim_targets, discrim_inputs=None, d_net='s_layer', **kwargs):
+    if d_net == 's_layer':
+        logits = create_s_layer_discriminator(discrim_targets, discrim_inputs, **kwargs)
+    elif d_net == 'n_layer':
+        scale_size = min(*discrim_targets.shape.as_list()[1:3])
+        n_layers = int(np.log2(scale_size // 32))
+        kwargs.pop('downsample_layer', None)  # unused
+        logits = create_n_layer_discriminator(discrim_targets, discrim_inputs, n_layers=n_layers, **kwargs)
+    else:
+        raise NotImplementedError
+    return logits
 
 
 class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
@@ -309,6 +362,7 @@ def generator_fn(inputs, hparams=None):
 def discriminator_fn(targets, inputs=None, hparams=None):
     if targets.shape.ndims == 4:
         logits = create_discriminator(targets, inputs,
+                                      d_net=hparams.d_net,
                                       ndf=hparams.ndf,
                                       norm_layer=hparams.norm_layer,
                                       downsample_layer=hparams.downsample_layer)
@@ -331,6 +385,7 @@ class Pix2PixVideoPredictionModel(VideoPredictionModel):
     def get_default_hparams_dict(self):
         default_hparams = super(Pix2PixVideoPredictionModel, self).get_default_hparams_dict()
         hparams = dict(
+            d_net='s_layer',
             output_nc=3,
             ngf=64,
             ndf=64,
