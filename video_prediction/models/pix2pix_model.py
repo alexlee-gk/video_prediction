@@ -288,22 +288,24 @@ class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
         self._state_size = (tf.TensorShape([]),  # time
                             tf.TensorShape(image_shape))  # gen_image
 
+        ground_truth_sampling_shape = [self.hparams.sequence_length - 1 - self.hparams.context_frames, batch_size]
         if self.hparams.schedule_sampling_k == -1:
-            self.ground_truth_conds = tf.constant(False)
+            ground_truth_sampling = tf.constant(False, dtype=tf.bool, shape=ground_truth_sampling_shape)
         else:
             # Scheduled sampling
             k = self.hparams.schedule_sampling_k
             iter_num = tf.to_float(tf.train.get_or_create_global_step())
             prob = (k / (k + tf.exp(iter_num / k)))
             log_probs = tf.log([1 - prob, prob])
-            ground_truth_conds = tf.multinomial([log_probs] * batch_size,
-                                                self.hparams.sequence_length - self.hparams.context_frames)
-            ground_truth_conds = tf.cast(tf.transpose(ground_truth_conds, [1, 0]), dtype=tf.bool)
+            ground_truth_sampling = tf.multinomial([log_probs] * batch_size, ground_truth_sampling_shape[0])
+            ground_truth_sampling = tf.cast(tf.transpose(ground_truth_sampling, [1, 0]), dtype=tf.bool)
             # Ensure that eventually, the model is deterministically
             # autoregressive (as opposed to autoregressive with very high probability).
-            self.ground_truth_conds = tf.cond(tf.less(prob, 0.001),
-                                              lambda: tf.constant(False, shape=ground_truth_conds.shape),
-                                              lambda: ground_truth_conds)
+            ground_truth_sampling = tf.cond(tf.less(prob, 0.001),
+                                            lambda: tf.constant(False, dtype=tf.bool, shape=ground_truth_sampling_shape),
+                                            lambda: ground_truth_sampling)
+        ground_truth_context = tf.constant(True, dtype=tf.bool, shape=[self.hparams.context_frames, batch_size])
+        self.ground_truth = tf.concat([ground_truth_context, ground_truth_sampling], axis=0)
 
     @property
     def output_size(self):
@@ -320,16 +322,7 @@ class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
         with tf.control_dependencies([tf.assert_equal(time[1:], time[0])]):
             t = tf.identity(time[0])
             t = tf.to_int32(t)
-        done_warm_start = tf.greater_equal(t, self.hparams.context_frames)
-        if self.hparams.schedule_sampling_k == -1:
-            image = tf.cond(done_warm_start,
-                            lambda: gen_image,  # feed in generated image
-                            lambda: image)  # feed in ground_truth
-        else:
-            ground_truth_cond = self.ground_truth_conds[t - self.hparams.context_frames]
-            image = tf.cond(done_warm_start,
-                            lambda: tf.where(ground_truth_cond, image, gen_image),  # schedule sampling
-                            lambda: image)  # feed in ground_truth
+        image = tf.where(self.ground_truth[t], image, gen_image)  # schedule sampling (if any)
         if 'actions' in inputs:
             action = inputs['actions']
             gen_input = ops.tile_concat([image, action[:, None, None, :]], axis=-1)
@@ -359,7 +352,7 @@ def generator_fn(inputs, hparams=None):
     gen_images = gen_images[hparams.context_frames - 1:]
     gen_inputs = gen_inputs[hparams.context_frames - 1:]
     return gen_images, {'gen_images': gen_images, 'gen_inputs': gen_inputs,
-                        'ground_truth_conds_mean': tf.reduce_mean(tf.to_float(cell.ground_truth_conds))}
+                        'ground_truth_sampling_mean': tf.reduce_mean(tf.to_float(cell.ground_truth[hparams.context_frames:]))}
 
 
 def discriminator_fn(targets, inputs=None, hparams=None):
