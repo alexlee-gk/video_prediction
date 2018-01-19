@@ -473,7 +473,7 @@ def generator_fn(inputs, outputs_enc=None, hparams=None):
         inputs['zs'] = zs
     else:
         if outputs_enc is not None:
-            raise ValueError('outputs_enc cannot be None when nz is 0.')
+            raise ValueError('outputs_enc has to be None when nz is 0.')
     cell = DNACell(inputs, hparams)
     outputs, _ = tf.nn.dynamic_rnn(cell, inputs, sequence_length=[hparams.sequence_length - 1] * batch_size,
                                    dtype=tf.float32, swap_memory=False, time_major=True)
@@ -488,6 +488,10 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
     def __init__(self, *args, **kwargs):
         super(ImprovedDNAVideoPredictionModel, self).__init__(
             generator_fn, discriminator_fn, encoder_fn, *args, **kwargs)
+        if self.hparams.nz == 0:
+            self.encoder_fn = None
+        if not self.hparams.gan_weight and not self.hparams.vae_gan_weight:
+            self.discrimination_fn = None
 
     def get_default_hparams_dict(self):
         default_hparams = super(ImprovedDNAVideoPredictionModel, self).get_default_hparams_dict()
