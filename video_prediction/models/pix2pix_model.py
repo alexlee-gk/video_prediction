@@ -289,15 +289,19 @@ class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
                             tf.TensorShape(image_shape))  # gen_image
 
         ground_truth_sampling_shape = [self.hparams.sequence_length - 1 - self.hparams.context_frames, batch_size]
-        if self.hparams.schedule_sampling_k == -1:
+        if self.hparams.schedule_sampling == 'none':
             ground_truth_sampling = tf.constant(False, dtype=tf.bool, shape=ground_truth_sampling_shape)
-        else:
-            # Scheduled sampling
-            k = self.hparams.schedule_sampling_k
-            start_step = self.hparams.schedule_sampling_start_step
-            iter_num = tf.to_float(tf.train.get_or_create_global_step())
-            prob = (k / (k + tf.exp((iter_num - start_step) / k)))
-            prob = tf.cond(tf.less(iter_num, start_step), lambda: 1.0, lambda: prob)
+        elif self.hparams.schedule_sampling in ('inverse_sigmoid', 'linear'):
+            if self.hparams.schedule_sampling == 'inverse_sigmoid':
+                k = self.hparams.schedule_sampling_k
+                start_step = self.hparams.schedule_sampling_steps[0]
+                iter_num = tf.to_float(tf.train.get_or_create_global_step())
+                prob = (k / (k + tf.exp((iter_num - start_step) / k)))
+                prob = tf.cond(tf.less(iter_num, start_step), lambda: 1.0, lambda: prob)
+            elif self.hparams.schedule_sampling == 'linear':
+                start_step, end_step = self.hparams.schedule_sampling_steps
+                step = tf.clip_by_value(tf.train.get_or_create_global_step(), start_step, end_step)
+                prob = 1.0 - tf.to_float(step - start_step) / tf.to_float(end_step - start_step)
             log_probs = tf.log([1 - prob, prob])
             ground_truth_sampling = tf.multinomial([log_probs] * batch_size, ground_truth_sampling_shape[0])
             ground_truth_sampling = tf.cast(tf.transpose(ground_truth_sampling, [1, 0]), dtype=tf.bool)
@@ -306,6 +310,8 @@ class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
             ground_truth_sampling = tf.cond(tf.less(prob, 0.001),
                                             lambda: tf.constant(False, dtype=tf.bool, shape=ground_truth_sampling_shape),
                                             lambda: ground_truth_sampling)
+        else:
+            raise NotImplementedError
         ground_truth_context = tf.constant(True, dtype=tf.bool, shape=[self.hparams.context_frames, batch_size])
         self.ground_truth = tf.concat([ground_truth_context, ground_truth_sampling], axis=0)
 
@@ -393,7 +399,8 @@ class Pix2PixVideoPredictionModel(VideoPredictionModel):
             d_downsample_layer='conv_pool2d',
             downsample_layer='conv_pool2d',
             upsample_layer='upsample_conv2d',
-            schedule_sampling_start_step=0,
+            schedule_sampling='inverse_sigmoid',
             schedule_sampling_k=900.0,
+            schedule_sampling_steps=(0, 1e5),
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
