@@ -315,7 +315,7 @@ class SoftPlacementVideoPredictionModel:
             gen_vae_tuple_gan_loss = vp.losses.gan_loss(outputs['discrim_tuple_logits_enc_fake'], 1.0, hparams.gan_loss_type)
             gen_losses["gen_vae_tuple_gan_loss"] = (gen_vae_tuple_gan_loss, hparams.vae_tuple_gan_weight)
         if hparams.kl_weight:
-            gen_kl_loss = vp.losses.kl_loss(outputs['zs_enc_mu'], outputs['zs_enc_log_sigma_sq'])
+            gen_kl_loss = vp.losses.kl_loss(outputs['enc_zs_mu'], outputs['enc_zs_log_sigma_sq'])
             if hparams.kl_anneal_k == -1:
                 kl_weight = tf.constant(hparams.kl_weight, tf.float32)
             else:
@@ -323,7 +323,7 @@ class SoftPlacementVideoPredictionModel:
                 kl_weight = hparams.kl_weight / (1 + hparams.kl_anneal_k * tf.exp(-tf.to_float(iter_num) / hparams.kl_anneal_k))
             gen_losses["gen_kl_loss"] = (gen_kl_loss, kl_weight)
         if hparams.z_l1_weight:
-            gen_z_l1_loss = vp.losses.l1_loss(outputs['gen_zs_enc_mu'], outputs['gen_zs_random'])
+            gen_z_l1_loss = vp.losses.l1_loss(outputs['gen_enc_zs_mu'], outputs['gen_zs_random'])
             gen_losses["gen_z_l1_loss"] = (gen_z_l1_loss, hparams.z_l1_weight)
         return gen_losses
 
