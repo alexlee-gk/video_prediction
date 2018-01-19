@@ -1,2 +1,3 @@
 from .base_model import SoftPlacementVideoPredictionModel, VideoPredictionModel
 from .pix2pix_model import Pix2PixVideoPredictionModel
+from .improved_dna_model import ImprovedDNAVideoPredictionModel

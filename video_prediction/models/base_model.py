@@ -8,7 +8,7 @@ from tensorflow.python.util import nest
 
 import video_prediction as vp
 from video_prediction.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
-    replace_read_ops, print_loss_info, add_image_summaries, add_scalar_summaries, add_image_or_scalar_summaries
+    replace_read_ops, print_loss_info, add_image_summaries, add_scalar_summaries
 
 
 class SoftPlacementVideoPredictionModel:
@@ -277,13 +277,16 @@ class SoftPlacementVideoPredictionModel:
 
         add_image_summaries({name: tensor for name, tensor in self.inputs.items() if tensor.shape.ndims >= 4})
         add_image_summaries({'targets': self.targets})
-        add_image_or_scalar_summaries(self.outputs)
+        add_image_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims >= 4})
+        add_scalar_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims == 0})
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
         add_scalar_summaries(self.metrics)
 
     def generator_loss_fn(self, inputs, outputs, targets):
         hparams = self.hparams
+        maybe_slice = lambda x: x[hparams.context_frames - hparams.sequence_length:] if x.shape.ndims > 0 else x
+        outputs = {name: maybe_slice(output) for name, output in outputs.items()}
         gen_losses = OrderedDict()
         if hparams.l1_weight or hparams.l2_weight:
             gen_images = outputs.get('gen_images_enc', outputs['gen_images'])
@@ -326,6 +329,8 @@ class SoftPlacementVideoPredictionModel:
 
     def discriminator_loss_fn(self, inputs, outputs, targets):
         hparams = self.hparams
+        maybe_slice = lambda x: x[hparams.context_frames - hparams.sequence_length:] if x.shape.ndims > 0 else x
+        outputs = {name: maybe_slice(output) for name, output in outputs.items()}
         discrim_losses = OrderedDict()
         if hparams.gan_weight:
             discrim_gan_loss_real = vp.losses.gan_loss(outputs['discrim_logits_real'], 1.0, hparams.gan_loss_type)
@@ -350,6 +355,9 @@ class SoftPlacementVideoPredictionModel:
         return discrim_losses
 
     def metrics_fn(self, inputs, outputs, targets):
+        hparams = self.hparams
+        maybe_slice = lambda x: x[hparams.context_frames - hparams.sequence_length:] if x.shape.ndims > 0 else x
+        outputs = {name: maybe_slice(output) for name, output in outputs.items()}
         metrics = OrderedDict()
         target_images = targets
         gen_images = outputs['gen_images']
@@ -442,7 +450,8 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
 
         add_image_summaries({name: tensor for name, tensor in self.inputs.items() if tensor.shape.ndims >= 4})
         add_image_summaries({'targets': self.targets})
-        add_image_or_scalar_summaries(self.outputs)
+        add_image_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims >= 4})
+        add_scalar_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims == 0})
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
         add_scalar_summaries(self.metrics)

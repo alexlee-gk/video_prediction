@@ -149,10 +149,10 @@ def create_generator(generator_inputs,
     return layers[-1]
 
 
-def create_s_layer_discriminator(discrim_targets, discrim_inputs=None,
-                                 ndf=64,
-                                 norm_layer='instance',
-                                 downsample_layer='conv_pool2d'):
+def create_legacy_discriminator(discrim_targets, discrim_inputs=None,
+                                ndf=64,
+                                norm_layer='instance',
+                                downsample_layer='conv_pool2d'):
     norm_layer = ops.get_norm_layer(norm_layer)
     downsample_layer = ops.get_downsample_layer(downsample_layer)
 
@@ -256,10 +256,10 @@ def create_n_layer_discriminator(discrim_targets, discrim_inputs=None,
     return layers[-1]
 
 
-def create_discriminator(discrim_targets, discrim_inputs=None, d_net='s_layer', **kwargs):
-    if d_net == 's_layer':
+def create_discriminator(discrim_targets, discrim_inputs=None, d_net='legacy', **kwargs):
+    if d_net == 'legacy':
         kwargs.pop('n_layers', None)  # unused
-        logits = create_s_layer_discriminator(discrim_targets, discrim_inputs, **kwargs)
+        logits = create_legacy_discriminator(discrim_targets, discrim_inputs, **kwargs)
     elif d_net == 'n_layer':
         kwargs.pop('downsample_layer', None)  # unused
         n_layers = kwargs.pop('n_layers', None)
@@ -268,7 +268,7 @@ def create_discriminator(discrim_targets, discrim_inputs=None, d_net='s_layer', 
             n_layers = int(np.log2(scale_size // 32))
         logits = create_n_layer_discriminator(discrim_targets, discrim_inputs, n_layers=n_layers, **kwargs)
     else:
-        raise NotImplementedError
+        raise ValueError('Invalid discriminator net %s' % d_net)
     return logits
 
 
@@ -328,8 +328,7 @@ class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
         time, gen_image = states
 
         with tf.control_dependencies([tf.assert_equal(time[1:], time[0])]):
-            t = tf.identity(time[0])
-            t = tf.to_int32(t)
+            t = tf.to_int32(tf.identity(time[0]))
         image = tf.where(self.ground_truth[t], image, gen_image)  # schedule sampling (if any)
         if 'actions' in inputs:
             action = inputs['actions']
@@ -355,12 +354,13 @@ def generator_fn(inputs, hparams=None):
     (gen_images, gen_inputs), _ = \
         tf.nn.dynamic_rnn(cell, inputs, sequence_length=[hparams.sequence_length - 1] * batch_size,
                           dtype=tf.float32, swap_memory=False, time_major=True)
+    outputs = {'gen_images': gen_images,
+               'gen_inputs': gen_inputs,
+               'ground_truth_sampling_mean': tf.reduce_mean(tf.to_float(cell.ground_truth[hparams.context_frames:]))}
     # the RNN outputs generated images from time step 1 to sequence_length,
     # but generator_fn should only return images past context_frames
-    gen_images = gen_images[hparams.context_frames - 1:]
-    gen_inputs = gen_inputs[hparams.context_frames - 1:]
-    return gen_images, {'gen_images': gen_images, 'gen_inputs': gen_inputs,
-                        'ground_truth_sampling_mean': tf.reduce_mean(tf.to_float(cell.ground_truth[hparams.context_frames:]))}
+    gen_images = outputs['gen_images'][hparams.context_frames - 1:]
+    return gen_images, outputs
 
 
 def discriminator_fn(targets, inputs=None, hparams=None):
@@ -375,10 +375,18 @@ def discriminator_fn(targets, inputs=None, hparams=None):
         if inputs is None:
             targets_and_inputs = (targets,)
         else:
-            targets_and_inputs = (targets, inputs['gen_inputs'])
+            gen_inputs = inputs.get('gen_inputs_enc')
+            if gen_inputs is None:
+                gen_inputs = inputs['gen_inputs']
+            if gen_inputs.shape[0] != targets.shape[0]:
+                assert targets.shape.as_list()[0] == (hparams.sequence_length - hparams.context_frames)
+                assert gen_inputs.shape.as_list()[0] == (hparams.sequence_length - 1)
+                gen_inputs = gen_inputs[hparams.context_frames - hparams.sequence_length:]
+            targets_and_inputs = (targets, gen_inputs)
         logits = tf.map_fn(lambda args: discriminator_fn(*args, hparams=hparams)[0],
                            targets_and_inputs,
-                           dtype=tf.float32, swap_memory=False)
+                           dtype=tf.float32, swap_memory=False,
+                           parallel_iterations=hparams.sequence_length - hparams.context_frames)
     return logits, {'discrim_logits': logits}
 
 
@@ -390,7 +398,10 @@ class Pix2PixVideoPredictionModel(VideoPredictionModel):
     def get_default_hparams_dict(self):
         default_hparams = super(Pix2PixVideoPredictionModel, self).get_default_hparams_dict()
         hparams = dict(
-            d_net='s_layer',
+            l1_weight=1.0,
+            l2_weight=0.0,
+            state_weight=0.0,
+            d_net='legacy',
             n_layers=0,
             output_nc=3,
             ngf=64,
