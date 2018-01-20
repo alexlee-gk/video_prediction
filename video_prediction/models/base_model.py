@@ -62,13 +62,31 @@ class SoftPlacementVideoPredictionModel:
 
         if any(self.hparams.decay_steps):
             lr, end_lr = self.hparams.lr, self.hparams.end_lr
-            decay_step, end_decay_step = self.hparams.decay_steps
-            step = tf.clip_by_value(tf.train.get_or_create_global_step(), decay_step, end_decay_step)
-            self.learning_rate = lr + (end_lr - lr) * tf.to_float(step - decay_step) / tf.to_float(end_decay_step - decay_step)
+            start_step, end_step = self.hparams.decay_steps
+            step = tf.clip_by_value(tf.train.get_or_create_global_step(), start_step, end_step)
+            self.learning_rate = lr + (end_lr - lr) * tf.to_float(step - start_step) / tf.to_float(end_step - start_step)
         else:
             self.learning_rate = self.hparams.lr
         self.g_optimizer = tf.train.AdamOptimizer(self.learning_rate, self.hparams.beta1, self.hparams.beta2)
         self.d_optimizer = tf.train.AdamOptimizer(self.learning_rate, self.hparams.beta1, self.hparams.beta2)
+
+        if self.hparams.kl_weight:
+            if self.hparams.kl_anneal == 'none':
+                self.kl_weight = tf.constant(self.hparams.kl_weight, tf.float32)
+            elif self.hparams.kl_anneal == 'sigmoid':
+                k = self.hparams.kl_anneal_k
+                if k == -1.0:
+                    raise ValueError('Invalid kl_anneal_k %d when kl_anneal is sigmoid.' % k)
+                iter_num = tf.train.get_or_create_global_step()
+                self.kl_weight = self.hparams.kl_weight / (1 + k * tf.exp(-tf.to_float(iter_num) / k))
+            elif self.hparams.kl_anneal == 'linear':
+                start_step, end_step = self.hparams.kl_anneal_steps
+                step = tf.clip_by_value(tf.train.get_or_create_global_step(), start_step, end_step)
+                self.kl_weight = self.hparams.kl_weight * tf.to_float(step - start_step) / tf.to_float(end_step - start_step)
+            else:
+                raise NotImplementedError
+        else:
+            self.kl_weight = None
 
         # member variables that should be set by `self.build_graph`
         self.inputs = None
@@ -120,7 +138,9 @@ class SoftPlacementVideoPredictionModel:
             vae_tuple_gan_weight=0.0,
             gan_loss_type='LSGAN',
             kl_weight=0.0,
+            kl_anneal='none',
             kl_anneal_k=-1.0,
+            kl_anneal_steps=(50000, 100000),
             z_l1_weight=0.0,
             lr=0.001,
             end_lr=0.0,
@@ -209,6 +229,11 @@ class SoftPlacementVideoPredictionModel:
         total_num_outputs = sum([len(output) for output in outputs])
         outputs = OrderedDict(itertools.chain(*[output.items() for output in outputs]))
         assert len(outputs) == total_num_outputs  # ensure no output is lost because of repeated keys
+
+        if isinstance(self.learning_rate, tf.Tensor):
+            outputs['learning_rate'] = self.learning_rate
+        if isinstance(self.kl_weight, tf.Tensor):
+            outputs['kl_weight'] = self.kl_weight
 
         if targets is not None:
             with tf.name_scope("discriminator_loss"):
@@ -318,12 +343,7 @@ class SoftPlacementVideoPredictionModel:
             gen_losses["gen_vae_tuple_gan_loss"] = (gen_vae_tuple_gan_loss, hparams.vae_tuple_gan_weight)
         if hparams.kl_weight:
             gen_kl_loss = vp.losses.kl_loss(outputs['enc_zs_mu'], outputs['enc_zs_log_sigma_sq'])
-            if hparams.kl_anneal_k == -1:
-                kl_weight = tf.constant(hparams.kl_weight, tf.float32)
-            else:
-                iter_num = tf.train.get_or_create_global_step()
-                kl_weight = hparams.kl_weight / (1 + hparams.kl_anneal_k * tf.exp(-tf.to_float(iter_num) / hparams.kl_anneal_k))
-            gen_losses["gen_kl_loss"] = (gen_kl_loss, kl_weight)
+            gen_losses["gen_kl_loss"] = (gen_kl_loss, self.kl_weight)  # possibly annealed kl_weight
         if hparams.z_l1_weight:
             gen_z_l1_loss = vp.losses.l1_loss(outputs['gen_enc_zs_mu'], outputs['gen_zs_random'])
             gen_losses["gen_z_l1_loss"] = (gen_z_l1_loss, hparams.z_l1_weight)

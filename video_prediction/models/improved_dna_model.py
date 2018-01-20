@@ -528,7 +528,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             dependent_mask=True,
             schedule_sampling='inverse_sigmoid',
             schedule_sampling_k=900.0,
-            schedule_sampling_steps=(0, 1e5),
+            schedule_sampling_steps=(0, 100000),
             e_net='legacy',
             nz=8,
             nef=32,
