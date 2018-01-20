@@ -501,9 +501,10 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
     def __init__(self, *args, **kwargs):
         super(ImprovedDNAVideoPredictionModel, self).__init__(
             generator_fn, discriminator_fn, encoder_fn, *args, **kwargs)
-        if self.hparams.nz == 0:
+        if self.hparams.e_net == 'none' or self.hparams.nz == 0:
             self.encoder_fn = None
-        if not self.hparams.gan_weight and not self.hparams.vae_gan_weight:
+        if not self.hparams.d_net == 'none' or (self.hparams.gan_weight == 0.0 and
+                                                self.hparams.vae_gan_weight == 0.0):
             self.discrimination_fn = None
 
     def get_default_hparams_dict(self):
