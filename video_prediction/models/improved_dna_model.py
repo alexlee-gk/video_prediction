@@ -106,6 +106,15 @@ def encoder_fn(inputs, hparams=None):
     images = inputs['images']
     image_pairs = tf.concat([images[:hparams.sequence_length - 1],
                              images[1:hparams.sequence_length]], axis=-1)
+    state_action = []
+    if 'actions' in inputs:
+        state_action.append(inputs['actions'])
+    if 'states' in inputs:
+        state_action.append(inputs['states'][:hparams.sequence_length - 1])
+    if state_action:
+        state_action = tf.concat(state_action, axis=-1)
+        image_pairs = tile_concat([image_pairs,
+                                   tf.expand_dims(tf.expand_dims(state_action, axis=-2), axis=-2)], axis=-1)
     outputs = create_encoder(image_pairs,
                              e_net=hparams.e_net,
                              nz=hparams.nz,
@@ -509,7 +518,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             d_downsample_layer='conv_pool2d',
             ngf=32,
             transformation='cdna',
-            kernel_size=(9, 9),
+            kernel_size=(5, 5),
             dilation_rate=(1, 1),
             lstm_skip_connection=False,
             num_transformed_images=4,
@@ -522,7 +531,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             schedule_sampling_steps=(0, 1e5),
             e_net='legacy',
             nz=8,
-            nef=64,
+            nef=32,
             use_lstm_z=True,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))

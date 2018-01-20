@@ -1012,9 +1012,6 @@ def get_norm_layer(layer_type):
     if layer_type == 'batch':
         layer = tf.layers.batch_normalization
     elif layer_type == 'instance':
-        from tensorflow.contrib.layers import instance_norm
-        layer = instance_norm
-    elif layer_type == 'fused_instance':
         from video_prediction.layers import fused_instance_norm
         layer = fused_instance_norm
     elif layer_type == 'none':
