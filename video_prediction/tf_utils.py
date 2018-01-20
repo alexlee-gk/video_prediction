@@ -54,6 +54,9 @@ def replace_read_ops(loss_or_losses, var_list):
     if not ops:  # loss_or_losses doesn't depend on any var in var_list, so there is nothiing to replace
         return
 
+    # filter out variables that are not involved in computing the loss
+    var_list = [var for var in var_list if var.op in ops]
+
     # assume that for each variable, the only op required to compute the loss
     # is a read op, and there is exactly one per variable
     read_ops = []
