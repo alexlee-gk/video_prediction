@@ -70,7 +70,11 @@ def replace_read_ops(loss_or_losses, var_list):
             with tf.device(read_op.device):
                 read_t, = read_op.outputs
                 consumer_ops = set(read_t.consumers()) & ops
-                ge.connect(ge.sgv(var.read_value().op), ge.sgv(consumer_ops))
+                # consumer_sgv might have multiple inputs, but we only care
+                # about replacing the input that is read_t
+                consumer_sgv = ge.sgv(consumer_ops)
+                consumer_sgv = consumer_sgv.remap_inputs([list(consumer_sgv.inputs).index(read_t)])
+                ge.connect(ge.sgv(var.read_value().op), consumer_sgv)
 
 
 def print_loss_info(losses, inputs, outputs, targets):

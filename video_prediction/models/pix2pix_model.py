@@ -7,7 +7,7 @@ import tensorflow as tf
 from video_prediction import ops
 from video_prediction import tf_utils
 from video_prediction.models import VideoPredictionModel
-from video_prediction.ops import conv2d, lrelu
+from video_prediction.ops import conv2d, lrelu, flatten
 
 
 def create_generator(generator_inputs,
@@ -257,6 +257,16 @@ def create_n_layer_discriminator(discrim_targets, discrim_inputs=None,
 
 
 def create_discriminator(discrim_targets, discrim_inputs=None, d_net='legacy', **kwargs):
+    should_flatten = discrim_targets.shape.ndims > 4
+    if should_flatten:
+        ndims = discrim_targets.shape.ndims
+        batch_shape = discrim_targets.shape[:-3].as_list()
+        discrim_targets = flatten(discrim_targets, 0, len(batch_shape) - 1)
+        if discrim_inputs is not None:
+            assert discrim_inputs.shape.ndims == ndims
+            assert discrim_inputs.shape[:-3].as_list() == batch_shape
+            discrim_inputs = flatten(discrim_inputs, 0, len(batch_shape) - 1)
+
     if d_net == 'legacy':
         kwargs.pop('n_layers', None)  # unused
         logits = create_legacy_discriminator(discrim_targets, discrim_inputs, **kwargs)
@@ -269,7 +279,31 @@ def create_discriminator(discrim_targets, discrim_inputs=None, d_net='legacy', *
         logits = create_n_layer_discriminator(discrim_targets, discrim_inputs, n_layers=n_layers, **kwargs)
     else:
         raise ValueError('Invalid discriminator net %s' % d_net)
+
+    if should_flatten:
+        logits = tf.reshape(logits, batch_shape + logits.shape.as_list()[1:])
     return logits
+
+
+def discriminator_fn(targets, inputs=None, hparams=None):
+    if inputs is None:
+        targets_and_inputs = (targets,)
+    else:
+        gen_inputs = inputs.get('gen_inputs_enc')
+        if gen_inputs is None:
+            gen_inputs = inputs['gen_inputs']
+        if gen_inputs.shape[0] != targets.shape[0]:
+            assert targets.shape.as_list()[0] == (hparams.sequence_length - hparams.context_frames)
+            assert gen_inputs.shape.as_list()[0] == (hparams.sequence_length - 1)
+            gen_inputs = gen_inputs[hparams.context_frames - hparams.sequence_length:]
+        targets_and_inputs = (targets, gen_inputs)
+    logits = create_discriminator(*targets_and_inputs,
+                                  d_net=hparams.d_net,
+                                  n_layers=hparams.n_layers,
+                                  ndf=hparams.ndf,
+                                  norm_layer=hparams.norm_layer,
+                                  downsample_layer=hparams.d_downsample_layer)
+    return logits, {'discrim_logits': logits}
 
 
 class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
@@ -361,33 +395,6 @@ def generator_fn(inputs, hparams=None):
     # but generator_fn should only return images past context_frames
     gen_images = outputs['gen_images'][hparams.context_frames - 1:]
     return gen_images, outputs
-
-
-def discriminator_fn(targets, inputs=None, hparams=None):
-    if targets.shape.ndims == 4:
-        logits = create_discriminator(targets, inputs,
-                                      d_net=hparams.d_net,
-                                      n_layers=hparams.n_layers,
-                                      ndf=hparams.ndf,
-                                      norm_layer=hparams.norm_layer,
-                                      downsample_layer=hparams.d_downsample_layer)
-    else:
-        if inputs is None:
-            targets_and_inputs = (targets,)
-        else:
-            gen_inputs = inputs.get('gen_inputs_enc')
-            if gen_inputs is None:
-                gen_inputs = inputs['gen_inputs']
-            if gen_inputs.shape[0] != targets.shape[0]:
-                assert targets.shape.as_list()[0] == (hparams.sequence_length - hparams.context_frames)
-                assert gen_inputs.shape.as_list()[0] == (hparams.sequence_length - 1)
-                gen_inputs = gen_inputs[hparams.context_frames - hparams.sequence_length:]
-            targets_and_inputs = (targets, gen_inputs)
-        logits = tf.map_fn(lambda args: discriminator_fn(*args, hparams=hparams)[0],
-                           targets_and_inputs,
-                           dtype=tf.float32, swap_memory=False,
-                           parallel_iterations=hparams.sequence_length - hparams.context_frames)
-    return logits, {'discrim_logits': logits}
 
 
 class Pix2PixVideoPredictionModel(VideoPredictionModel):
