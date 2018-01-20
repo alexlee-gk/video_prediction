@@ -19,7 +19,7 @@ class SoftPlacementVideoPredictionModel:
                  generator_scope='generator',
                  discriminator_scope='discriminator',
                  encoder_scope='encoder',
-                 discriminator_encoder_scope='discriminator',
+                 discriminator_encoder_scope='discriminator_encoder',
                  hparams_dict=None,
                  hparams=None):
         """
@@ -253,7 +253,9 @@ class SoftPlacementVideoPredictionModel:
         self.g_loss = sum(loss * weight for loss, weight in self.g_losses.values())
         g_loss_post = sum(loss * weight for loss, weight in g_losses_post.values())
 
-        self.d_vars = tf.trainable_variables(self.discriminator_scope)
+        d_vars = tf.trainable_variables(self.discriminator_scope)
+        de_vars = tf.trainable_variables(self.discriminator_encoder_scope)
+        self.d_vars = d_vars + [de_var for de_var in de_vars if de_var not in d_vars]
         self.g_vars = tf.trainable_variables(self.generator_scope)
 
         if self.d_losses or self.g_losses:
@@ -372,8 +374,14 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
         """
         Video prediction model with multi-GPU support.
         """
-        self.num_gpus = kwargs.pop('num_gpus', 1)
         super(VideoPredictionModel, self).__init__(*args, **kwargs)
+
+    def get_default_hparams_dict(self):
+        default_hparams = super(VideoPredictionModel, self).get_default_hparams_dict()
+        hparams = dict(
+            num_gpus=1,
+        )
+        return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
     def build_graph(self, inputs, targets=None):
         self.inputs = inputs
@@ -381,12 +389,15 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
 
         global_step = tf.train.get_or_create_global_step()
 
-        tower_inputs = [OrderedDict() for _ in range(self.num_gpus)]
+        tower_inputs = [OrderedDict() for _ in range(self.hparams.num_gpus)]
         for name, input in self.inputs.items():
-            input_splits = tf.split(input, self.num_gpus)  # assumes batch_size is divisible by num_gpus
-            for i in range(self.num_gpus):
+            input_splits = tf.split(input, self.hparams.num_gpus)  # assumes batch_size is divisible by num_gpus
+            for i in range(self.hparams.num_gpus):
                 tower_inputs[i][name] = input_splits[i]
-        tower_targets = tf.split(targets, self.num_gpus) if targets is not None else [None] * self.num_gpus
+        if targets is not None:
+            tower_targets = tf.split(targets, self.hparams.num_gpus)
+        else:
+            tower_targets = [None] * self.hparams.num_gpus
 
         tower_outputs_tuple = []
         tower_d_losses = []
@@ -396,7 +407,7 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
         tower_d_loss = []
         tower_g_loss = []
         tower_g_loss_post = []
-        for i in range(self.num_gpus):
+        for i in range(self.hparams.num_gpus):
             worker_device = '/{}:{}'.format('gpu', i)
             device_setter = local_device_setter(worker_device=worker_device)
             with tf.variable_scope('', reuse=bool(i > 0)):
@@ -416,7 +427,9 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
                         tower_g_loss.append(g_loss)
                         tower_g_loss_post.append(g_loss_post)
 
-        self.d_vars = tf.trainable_variables(self.discriminator_scope)
+        d_vars = tf.trainable_variables(self.discriminator_scope)
+        de_vars = tf.trainable_variables(self.discriminator_encoder_scope)
+        self.d_vars = d_vars + [de_var for de_var in de_vars if de_var not in d_vars]
         self.g_vars = tf.trainable_variables(self.generator_scope)
 
         if any(tower_d_losses) or any(tower_g_losses):

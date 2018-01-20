@@ -3,6 +3,7 @@ from collections import OrderedDict
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.util import nest
 
 from video_prediction import ops
 from video_prediction import tf_utils
@@ -81,6 +82,11 @@ def create_n_layer_encoder(inputs,
 
 
 def create_encoder(inputs, e_net='legacy', **kwargs):
+    should_flatten = inputs.shape.ndims > 4
+    if should_flatten:
+        batch_shape = inputs.shape[:-3].as_list()
+        inputs = flatten(inputs, 0, len(batch_shape) - 1)
+
     if e_net == 'legacy':
         kwargs.pop('n_layers', None)  # unused
         outputs = create_legacy_encoder(inputs, **kwargs)
@@ -88,26 +94,24 @@ def create_encoder(inputs, e_net='legacy', **kwargs):
         outputs = create_n_layer_encoder(inputs, **kwargs)
     else:
         raise ValueError('Invalid encoder net %s' % e_net)
+
+    if should_flatten:
+        def unflatten(x):
+            return tf.reshape(x, batch_shape + x.shape.as_list()[1:])
+        outputs = nest.map_structure(unflatten, outputs)
     return outputs
 
 
 def encoder_fn(inputs, hparams=None):
-    if isinstance(inputs, tf.Tensor):
-        outputs = create_encoder(inputs,
-                                 e_net=hparams.e_net,
-                                 nz=hparams.nz,
-                                 nef=hparams.nef,
-                                 n_layers=hparams.n_layers,
-                                 norm_layer=hparams.norm_layer)
-    else:
-        images = inputs['images']
-        image_pairs = tf.concat([images[:hparams.sequence_length - 1],
-                                 images[1:hparams.sequence_length]], axis=-1)
-        outputs = tf.map_fn(lambda image_pairs: encoder_fn(image_pairs, hparams=hparams),
-                            image_pairs,
-                            dtype={'enc_zs_mu': tf.float32, 'enc_zs_log_sigma_sq': tf.float32},
-                            swap_memory=False,
-                            parallel_iterations=hparams.sequence_length - hparams.context_frames)
+    images = inputs['images']
+    image_pairs = tf.concat([images[:hparams.sequence_length - 1],
+                             images[1:hparams.sequence_length]], axis=-1)
+    outputs = create_encoder(image_pairs,
+                             e_net=hparams.e_net,
+                             nz=hparams.nz,
+                             nef=hparams.nef,
+                             n_layers=hparams.n_layers,
+                             norm_layer=hparams.norm_layer)
     return outputs
 
 
