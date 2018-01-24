@@ -147,6 +147,13 @@ def fused_instance_norm(inputs,
       inputs = array_ops.transpose(inputs, [0, reduction_axis] + list(range(1, reduction_axis)))
     inputs_nchw_shape = inputs.shape
     inputs = array_ops.reshape(inputs, [1, -1] + inputs_nchw_shape.as_list()[2:])
+    if inputs.shape.ndims != 4:
+        # combine all the spatial dimensions into only two, e.g. [D, H, W] -> [DH, W]
+        if inputs.shape.ndims > 4:
+            inputs_ndims4_shape = inputs.shape.as_list()[:2] + [-1, inputs_nchw_shape.as_list()[-1]]
+        else:
+            inputs_ndims4_shape = inputs.shape.as_list()[:2] + [1, -1]
+        inputs = array_ops.reshape(inputs, inputs_ndims4_shape)
     beta = array_ops.reshape(array_ops.tile(beta[None, :], [inputs_nchw_shape[0].value, 1]), [-1])
     gamma = array_ops.reshape(array_ops.tile(gamma[None, :], [inputs_nchw_shape[0].value, 1]), [-1])
 

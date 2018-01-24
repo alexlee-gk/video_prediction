@@ -135,7 +135,11 @@ class SoftPlacementVideoPredictionModel:
             gan_weight=0.0,
             vae_gan_weight=0.0,
             tuple_gan_weight=0.0,
-            vae_tuple_gan_weight=0.0,
+            tuple_vae_gan_weight=0.0,
+            image_gan_weight=0.0,
+            image_vae_gan_weight=0.0,
+            video_gan_weight=0.0,
+            video_vae_gan_weight=0.0,
             gan_loss_type='LSGAN',
             kl_weight=0.0,
             kl_anneal='none',
@@ -329,18 +333,22 @@ class SoftPlacementVideoPredictionModel:
             target_states = inputs['states'][hparams.context_frames:]
             gen_state_loss = vp.losses.l2_loss(gen_states, target_states)
             gen_losses["gen_state_loss"] = (gen_state_loss, hparams.state_weight)
-        if hparams.gan_weight:
-            gen_gan_loss = vp.losses.gan_loss(outputs['discrim_logits_fake'], 1.0, hparams.gan_loss_type)
-            gen_losses["gen_gan_loss"] = (gen_gan_loss, hparams.gan_weight)
-        if hparams.vae_gan_weight:
-            gen_vae_gan_loss = vp.losses.gan_loss(outputs['discrim_logits_enc_fake'], 1.0, hparams.gan_loss_type)
-            gen_losses["gen_vae_gan_loss"] = (gen_vae_gan_loss, hparams.vae_gan_weight)
-        if hparams.tuple_gan_weight:
-            gen_tuple_gan_loss = vp.losses.gan_loss(outputs['discrim_tuple_logits_fake'], 1.0, hparams.gan_loss_type)
-            gen_losses["gen_tuple_gan_loss"] = (gen_tuple_gan_loss, hparams.tuple_gan_weight)
-        if hparams.vae_tuple_gan_weight:
-            gen_vae_tuple_gan_loss = vp.losses.gan_loss(outputs['discrim_tuple_logits_enc_fake'], 1.0, hparams.gan_loss_type)
-            gen_losses["gen_vae_tuple_gan_loss"] = (gen_vae_tuple_gan_loss, hparams.vae_tuple_gan_weight)
+        gan_weights = {'': hparams.gan_weight,
+                       '_tuple': hparams.tuple_gan_weight,
+                       '_image': hparams.image_gan_weight,
+                       '_video': hparams.video_gan_weight}
+        for infix, gan_weight in gan_weights.items():
+            if gan_weight:
+                gen_gan_loss = vp.losses.gan_loss(outputs['discrim%s_logits_fake' % infix], 1.0, hparams.gan_loss_type)
+                gen_losses["gen%s_gan_loss" % infix] = (gen_gan_loss, gan_weight)
+        vae_gan_weights = {'': hparams.vae_gan_weight,
+                           '_tuple': hparams.tuple_vae_gan_weight,
+                           '_image': hparams.image_vae_gan_weight,
+                           '_video': hparams.video_vae_gan_weight}
+        for infix, vae_gan_weight in vae_gan_weights.items():
+            if vae_gan_weight:
+                gen_vae_gan_loss = vp.losses.gan_loss(outputs['discrim%s_logits_enc_fake' % infix], 1.0, hparams.gan_loss_type)
+                gen_losses["gen%s_vae_gan_loss" % infix] = (gen_vae_gan_loss, vae_gan_weight)
         if hparams.kl_weight:
             gen_kl_loss = vp.losses.kl_loss(outputs['enc_zs_mu'], outputs['enc_zs_log_sigma_sq'])
             gen_losses["gen_kl_loss"] = (gen_kl_loss, self.kl_weight)  # possibly annealed kl_weight
@@ -354,26 +362,26 @@ class SoftPlacementVideoPredictionModel:
         maybe_slice = lambda x: x[hparams.context_frames - hparams.sequence_length:] if x.shape.ndims > 0 else x
         outputs = {name: maybe_slice(output) for name, output in outputs.items()}
         discrim_losses = OrderedDict()
-        if hparams.gan_weight:
-            discrim_gan_loss_real = vp.losses.gan_loss(outputs['discrim_logits_real'], 1.0, hparams.gan_loss_type)
-            discrim_gan_loss_fake = vp.losses.gan_loss(outputs['discrim_logits_fake'], 0.0, hparams.gan_loss_type)
-            discrim_gan_loss = discrim_gan_loss_real + discrim_gan_loss_fake
-            discrim_losses["discrim_gan_loss"] = (discrim_gan_loss, hparams.gan_weight)
-        if hparams.vae_gan_weight:
-            discrim_vae_gan_loss_real = vp.losses.gan_loss(outputs['discrim_logits_enc_real'], 1.0, hparams.gan_loss_type)
-            discrim_vae_gan_loss_fake = vp.losses.gan_loss(outputs['discrim_logits_enc_fake'], 0.0, hparams.gan_loss_type)
-            discrim_vae_gan_loss = discrim_vae_gan_loss_real + discrim_vae_gan_loss_fake
-            discrim_losses["discrim_vae_gan_loss"] = (discrim_vae_gan_loss, hparams.vae_gan_weight)
-        if hparams.tuple_gan_weight:
-            discrim_tuple_gan_loss_real = vp.losses.tuple_gan_loss(outputs['discrim_tuple_logits_real'], 1.0, hparams.gan_loss_type)
-            discrim_tuple_gan_loss_fake = vp.losses.tuple_gan_loss(outputs['discrim_tuple_logits_fake'], 0.0, hparams.gan_loss_type)
-            discrim_tuple_gan_loss = discrim_tuple_gan_loss_real + discrim_tuple_gan_loss_fake
-            discrim_losses["discrim_tuple_gan_loss"] = (discrim_tuple_gan_loss, hparams.tuple_gan_weight)
-        if hparams.vae_tuple_gan_weight:
-            discrim_vae_tuple_gan_loss_real = vp.losses.gan_loss(outputs['discrim_tuple_logits_enc_real'], 1.0, hparams.gan_loss_type)
-            discrim_vae_tuple_gan_loss_fake = vp.losses.gan_loss(outputs['discrim_tuple_logits_enc_fake'], 0.0, hparams.gan_loss_type)
-            discrim_vae_tuple_gan_loss = discrim_vae_tuple_gan_loss_real + discrim_vae_tuple_gan_loss_fake
-            discrim_losses["discrim_vae_tuple_gan_loss"] = (discrim_vae_tuple_gan_loss, hparams.vae_tuple_gan_weight)
+        gan_weights = {'': hparams.gan_weight,
+                       '_tuple': hparams.tuple_gan_weight,
+                       '_image': hparams.image_gan_weight,
+                       '_video': hparams.video_gan_weight}
+        for infix, gan_weight in gan_weights.items():
+            if gan_weight:
+                discrim_gan_loss_real = vp.losses.gan_loss(outputs['discrim%s_logits_real' % infix], 1.0, hparams.gan_loss_type)
+                discrim_gan_loss_fake = vp.losses.gan_loss(outputs['discrim%s_logits_fake' % infix], 0.0, hparams.gan_loss_type)
+                discrim_gan_loss = discrim_gan_loss_real + discrim_gan_loss_fake
+                discrim_losses["discrim%s_gan_loss" % infix] = (discrim_gan_loss, gan_weight)
+        vae_gan_weights = {'': hparams.vae_gan_weight,
+                           '_tuple': hparams.tuple_vae_gan_weight,
+                           '_image': hparams.image_vae_gan_weight,
+                           '_video': hparams.video_vae_gan_weight}
+        for infix, vae_gan_weight in vae_gan_weights.items():
+            if vae_gan_weight:
+                discrim_vae_gan_loss_real = vp.losses.gan_loss(outputs['discrim%s_logits_enc_real' % infix], 1.0, hparams.gan_loss_type)
+                discrim_vae_gan_loss_fake = vp.losses.gan_loss(outputs['discrim%s_logits_enc_fake' % infix], 0.0, hparams.gan_loss_type)
+                discrim_vae_gan_loss = discrim_vae_gan_loss_real + discrim_vae_gan_loss_fake
+                discrim_losses["discrim%s_vae_gan_loss" % infix] = (discrim_vae_gan_loss, vae_gan_weight)
         return discrim_losses
 
     def metrics_fn(self, inputs, outputs, targets):

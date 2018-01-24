@@ -8,7 +8,7 @@ from tensorflow.python.util import nest
 from video_prediction import ops
 from video_prediction import tf_utils
 from video_prediction.models import VideoPredictionModel
-from video_prediction.models.pix2pix_model import discriminator_fn
+from video_prediction.models import pix2pix_model, mocogan_model
 from video_prediction.ops import lrelu, dense, pad2d, conv2d, upsample_conv2d, conv_pool2d, flatten, tile_concat, pool2d
 from video_prediction.rnn_ops import BasicConv2DLSTMCell
 
@@ -122,6 +122,18 @@ def encoder_fn(inputs, hparams=None):
                              n_layers=hparams.n_layers,
                              norm_layer=hparams.norm_layer)
     return outputs
+
+
+def discriminator_fn(targets, inputs=None, hparams=None):
+    outputs = {}
+    if hparams.gan_weight or hparams.vae_gan_weight:
+        _, pix2pix_outputs = pix2pix_model.discriminator_fn(targets, inputs=inputs, hparams=hparams)
+        outputs.update(pix2pix_outputs)
+    if hparams.image_gan_weight or hparams.image_vae_gan_weight or \
+            hparams.video_gan_weight or hparams.video_vae_gan_weight:
+        _, mocogan_outputs = mocogan_model.discriminator_fn(targets, inputs=inputs, hparams=hparams)
+        outputs.update(mocogan_outputs)
+    return None, outputs
 
 
 class DNACell(tf.nn.rnn_cell.RNNCell):
@@ -503,9 +515,6 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             generator_fn, discriminator_fn, encoder_fn, *args, **kwargs)
         if self.hparams.e_net == 'none' or self.hparams.nz == 0:
             self.encoder_fn = None
-        if not self.hparams.d_net == 'none' or (self.hparams.gan_weight == 0.0 and
-                                                self.hparams.vae_gan_weight == 0.0):
-            self.discrimination_fn = None
 
     def get_default_hparams_dict(self):
         default_hparams = super(ImprovedDNAVideoPredictionModel, self).get_default_hparams_dict()
