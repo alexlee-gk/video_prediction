@@ -535,6 +535,8 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             nef=32,
             use_lstm_z=True,
             d_context_frames=1,
+            d_stop_gradient_inputs=False,
+            d_use_gt_inputs=False,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 

@@ -290,9 +290,12 @@ def discriminator_fn(targets, inputs=None, hparams=None):
         targets_and_inputs = (targets,)
     else:
         if hparams.d_context_frames:
-            gen_inputs = inputs.get('gen_inputs_enc')
-            if gen_inputs is None:
-                gen_inputs = inputs['gen_inputs']
+            if hparams.d_use_gt_inputs:
+                gen_inputs = inputs['images'][:hparams.sequence_length - 1]
+            else:
+                gen_inputs = inputs.get('gen_inputs_enc')
+                if gen_inputs is None:
+                    gen_inputs = inputs['gen_inputs']
             if gen_inputs.shape[0] != targets.shape[0]:
                 assert targets.shape.as_list()[0] == (hparams.sequence_length - hparams.context_frames)
                 assert gen_inputs.shape.as_list()[0] == (hparams.sequence_length - 1)
@@ -303,6 +306,8 @@ def discriminator_fn(targets, inputs=None, hparams=None):
                 gen_inputs_list.append(
                     gen_inputs[hparams.context_frames - hparams.sequence_length - i:gen_inputs.shape[0].value - i])
             gen_inputs = tf.concat(gen_inputs_list, axis=-1)  # should raise exception if gen_inputs is not big enough
+            if hparams.d_stop_gradient_inputs:
+                gen_inputs = tf.stop_gradient(gen_inputs)
         else:
             gen_inputs = None
         targets_and_inputs = (targets, gen_inputs)
