@@ -289,13 +289,22 @@ def discriminator_fn(targets, inputs=None, hparams=None):
     if inputs is None:
         targets_and_inputs = (targets,)
     else:
-        gen_inputs = inputs.get('gen_inputs_enc')
-        if gen_inputs is None:
-            gen_inputs = inputs['gen_inputs']
-        if gen_inputs.shape[0] != targets.shape[0]:
-            assert targets.shape.as_list()[0] == (hparams.sequence_length - hparams.context_frames)
-            assert gen_inputs.shape.as_list()[0] == (hparams.sequence_length - 1)
-            gen_inputs = gen_inputs[hparams.context_frames - hparams.sequence_length:]
+        if hparams.d_context_frames:
+            gen_inputs = inputs.get('gen_inputs_enc')
+            if gen_inputs is None:
+                gen_inputs = inputs['gen_inputs']
+            if gen_inputs.shape[0] != targets.shape[0]:
+                assert targets.shape.as_list()[0] == (hparams.sequence_length - hparams.context_frames)
+                assert gen_inputs.shape.as_list()[0] == (hparams.sequence_length - 1)
+            if hparams.d_context_frames > hparams.context_frames:
+                raise ValueError('d_context_frames cannot be greater than context_frames')
+            gen_inputs_list = []
+            for i in range(hparams.d_context_frames):
+                gen_inputs_list.append(
+                    gen_inputs[hparams.context_frames - hparams.sequence_length - i:gen_inputs.shape[0].value - i])
+            gen_inputs = tf.concat(gen_inputs_list, axis=-1)  # should raise exception if gen_inputs is not big enough
+        else:
+            gen_inputs = None
         targets_and_inputs = (targets, gen_inputs)
     logits = create_discriminator(*targets_and_inputs,
                                   d_net=hparams.d_net,
