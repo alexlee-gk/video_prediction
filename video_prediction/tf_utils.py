@@ -97,6 +97,13 @@ def print_loss_info(losses, inputs, outputs, targets):
             print('    %s' % tensor_to_names[descendant])
 
 
+def transpose_batch_time(x):
+    if isinstance(x, tf.Tensor) and x.shape.ndims >= 2:
+        return tf.transpose(x, [1, 0] + list(range(2, x.shape.ndims)))
+    else:
+        return x
+
+
 def maybe_pad_or_slice(tensor, desired_length):
     length = tensor.shape.as_list()[0]
     if length < desired_length:

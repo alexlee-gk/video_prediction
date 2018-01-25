@@ -124,7 +124,8 @@ def discriminator_fn(targets, inputs=None, hparams=None):
         _, pix2pix_outputs = pix2pix_model.discriminator_fn(targets, inputs=inputs, hparams=hparams)
         outputs.update(pix2pix_outputs)
     if hparams.image_gan_weight or hparams.image_vae_gan_weight or \
-            hparams.video_gan_weight or hparams.video_vae_gan_weight:
+            hparams.video_gan_weight or hparams.video_vae_gan_weight or \
+            hparams.acvideo_gan_weight or hparams.acvideo_vae_gan_weight:
         _, mocogan_outputs = mocogan_model.discriminator_fn(targets, inputs=inputs, hparams=hparams)
         outputs.update(mocogan_outputs)
     return None, outputs
