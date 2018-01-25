@@ -297,8 +297,8 @@ def discriminator_fn(targets, inputs=None, hparams=None):
                 if gen_inputs is None:
                     gen_inputs = inputs['gen_inputs']
             if gen_inputs.shape[0] != targets.shape[0]:
-                assert targets.shape.as_list()[0] == (hparams.sequence_length - hparams.context_frames)
-                assert gen_inputs.shape.as_list()[0] == (hparams.sequence_length - 1)
+                assert targets.shape[0].value == (hparams.sequence_length - hparams.context_frames)
+                assert gen_inputs.shape[0].value == (hparams.sequence_length - 1)
             if hparams.d_context_frames > hparams.context_frames:
                 raise ValueError('d_context_frames cannot be greater than context_frames')
             gen_inputs_list = []
@@ -325,12 +325,12 @@ class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
         super(Pix2PixCell, self).__init__(_reuse=reuse)
         self.inputs = inputs
         self.hparams = hparams
-        _, batch_size, *image_shape = inputs['images'].shape.as_list()
+
+        batch_size = inputs['images'].shape[1].value
+        image_shape = inputs['images'].shape.as_list()[2:]
+        gen_input_shape = list(image_shape)
         if 'actions' in inputs:
-            _, _, *action_shape = inputs['actions'].shape.as_list()
-            gen_input_shape = list(image_shape[:-1]) + [image_shape[-1] + action_shape[-1]]
-        else:
-            gen_input_shape = image_shape
+            gen_input_shape[-1] += inputs['actions'].shape[-1].value
         self._output_size = (tf.TensorShape(image_shape),  # gen_image
                              tf.TensorShape(gen_input_shape))  # gen_input
         self._state_size = (tf.TensorShape([]),  # time
@@ -395,7 +395,7 @@ class Pix2PixCell(tf.nn.rnn_cell.RNNCell):
 
 
 def generator_fn(inputs, hparams=None):
-    batch_size = inputs['images'].shape.as_list()[1]
+    batch_size = inputs['images'].shape[1].value
     cell = Pix2PixCell(inputs, hparams)
     inputs = OrderedDict([(name, tf_utils.maybe_pad_or_slice(input, hparams.sequence_length - 1))
                           for name, input in inputs.items() if name in ('images', 'actions')])

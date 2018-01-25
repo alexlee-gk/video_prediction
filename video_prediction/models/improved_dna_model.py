@@ -106,15 +106,9 @@ def encoder_fn(inputs, hparams=None):
     images = inputs['images']
     image_pairs = tf.concat([images[:hparams.sequence_length - 1],
                              images[1:hparams.sequence_length]], axis=-1)
-    state_action = []
     if 'actions' in inputs:
-        state_action.append(inputs['actions'])
-    if 'states' in inputs:
-        state_action.append(inputs['states'][:hparams.sequence_length - 1])
-    if state_action:
-        state_action = tf.concat(state_action, axis=-1)
         image_pairs = tile_concat([image_pairs,
-                                   tf.expand_dims(tf.expand_dims(state_action, axis=-2), axis=-2)], axis=-1)
+                                   tf.expand_dims(tf.expand_dims(inputs['actions'], axis=-2), axis=-2)], axis=-1)
     outputs = create_encoder(image_pairs,
                              e_net=hparams.e_net,
                              nz=hparams.nz,
@@ -142,7 +136,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         self.inputs = inputs
         self.hparams = hparams
 
-        batch_size = inputs['images'].shape.as_list()[1]
+        batch_size = inputs['images'].shape[1].value
         image_shape = inputs['images'].shape.as_list()[2:]
         height, width, _ = image_shape
         scale_size = min(height, width)
@@ -178,9 +172,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         # output_size
         gen_input_shape = list(image_shape)
         if 'actions' in inputs:
-            gen_input_shape[-1] += inputs['actions'].shape.as_list()[-1]
-        if 'states' in inputs:
-            gen_input_shape[-1] += inputs['states'].shape.as_list()[-1]
+            gen_input_shape[-1] += inputs['actions'].shape[-1].value
         num_masks = int(bool(self.hparams.first_image_background)) + \
                     int(bool(self.hparams.prev_image_background)) + \
                     int(bool(self.hparams.generate_scratch_image)) + \
@@ -317,7 +309,10 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
 
         state_action = tf.concat(state_action, axis=-1)
         state_action_z = tf.concat(state_action_z, axis=-1)
-        gen_input = tile_concat([image, state_action[:, None, None, :]], axis=-1)
+        if 'actions' in inputs:
+            gen_input = tile_concat([image, inputs['actions'][:, None, None, :]], axis=-1)
+        else:
+            gen_input = image
 
         layers = []
         new_lstm_states = []
@@ -459,7 +454,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         if 'states' in inputs:
             with tf.name_scope('gen_states'):
                 with tf.variable_scope('state_pred'):
-                    gen_state = dense(state_action, inputs['states'].shape.as_list()[-1])
+                    gen_state = dense(state_action, inputs['states'].shape[-1].value)
 
         outputs = {'gen_images': gen_image,
                    'gen_inputs': gen_input,
@@ -484,7 +479,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
 
 
 def generator_fn(inputs, outputs_enc=None, hparams=None):
-    batch_size = inputs['images'].shape.as_list()[1]
+    batch_size = inputs['images'].shape[1].value
     inputs = OrderedDict([(name, tf_utils.maybe_pad_or_slice(input, hparams.sequence_length - 1))
                           for name, input in inputs.items()])
     if hparams.nz:
