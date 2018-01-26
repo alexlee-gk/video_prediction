@@ -120,7 +120,7 @@ def discriminator_fn(targets, inputs=None, hparams=None):
     outputs = {}
     if hparams.image_gan_weight or hparams.image_vae_gan_weight:
         image_logits = create_image_discriminator(images_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer)
-        outputs['discrim_image_logits'] = image_logits
+        outputs['discrim_image_logits'] = tf.expand_dims(image_logits, axis=0)  # expand dims for the time dimension
     if hparams.video_gan_weight or hparams.video_vae_gan_weight:
         video_logits = create_video_discriminator(clips_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer)
         outputs['discrim_video_logits'] = video_logits

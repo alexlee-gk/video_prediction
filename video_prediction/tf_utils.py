@@ -95,7 +95,7 @@ def print_loss_info(losses, inputs, outputs, targets):
     print(tf.get_default_graph().get_name_scope())
     for name, (loss, weight) in losses.items():
         print('  %s (%r)' % (name, weight))
-        for descendant in get_descendants(loss, tensor_to_names.keys()):
+        for descendant in set(get_descendants(loss, tensor_to_names.keys())):
             print('    %s' % tensor_to_names[descendant])
 
 
