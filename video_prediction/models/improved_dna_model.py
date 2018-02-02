@@ -185,7 +185,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             'masks': tf.TensorShape([height, width, 1, num_masks]),
         }
         if 'pix_distribs' in inputs:
-            output_size['gen_pix_distrib'] = tf.TensorShape([height, width, 1])
+            output_size['gen_pix_distribs'] = tf.TensorShape([height, width, 1])
             output_size['transformed_pix_distribs'] = tf.TensorShape([height, width, 1, num_masks])
         if 'states' in inputs:
             output_size['gen_states'] = inputs['states'].shape[2:]
@@ -289,7 +289,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
 
         image = tf.where(self.ground_truth[t], inputs['images'], states['gen_image'])  # schedule sampling (if any)
         if 'pix_distribs' in inputs:
-            pix_distrib = tf.where(self.ground_truth[t], inputs['pix_distribs'], states['gen_pix_distribs'])
+            pix_distrib = tf.where(self.ground_truth[t], inputs['pix_distribs'], states['gen_pix_distrib'])
 
         state_action = []
         if 'actions' in inputs:
@@ -462,7 +462,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                    'transformed_images': tf.stack(transformed_images, axis=-1),
                    'masks': tf.stack(masks, axis=-1)}
         if 'pix_distribs' in inputs:
-            outputs['gen_pix_distrib'] = gen_pix_distrib
+            outputs['gen_pix_distribs'] = gen_pix_distrib
             outputs['transformed_pix_distribs'] = tf.stack(transformed_pix_distribs, axis=-1)
         if 'states' in inputs:
             outputs['gen_states'] = gen_state
@@ -511,6 +511,8 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             generator_fn, discriminator_fn, encoder_fn, *args, **kwargs)
         if self.hparams.e_net == 'none' or self.hparams.nz == 0:
             self.encoder_fn = None
+        if self.hparams.d_net == 'none':
+            self.discriminator_fn = None
 
     def get_default_hparams_dict(self):
         default_hparams = super(ImprovedDNAVideoPredictionModel, self).get_default_hparams_dict()
@@ -544,6 +546,20 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             d_use_gt_inputs=False,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
+
+    def parse_hparams(self, hparams_dict, hparams):
+        hparams = super(ImprovedDNAVideoPredictionModel, self).parse_hparams(hparams_dict, hparams)
+        if self.mode != 'train':
+            def override_hparams_maybe(name, value):
+                orig_value = hparams.values()[name]
+                if orig_value != value:
+                    print('Overriding hparams from %s=%r to %r for mode=%s.' %
+                          (name, orig_value, value, self.mode))
+                    hparams.set_hparam(name, value)
+            override_hparams_maybe('d_net', 'none')
+            override_hparams_maybe('e_net', 'none')
+            override_hparams_maybe('schedule_sampling', 'none')
+        return hparams
 
 
 def apply_dna_kernels(image, kernels, dilation_rate=(1, 1)):

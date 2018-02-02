@@ -9,9 +9,91 @@ from tensorflow.python.util import nest
 import video_prediction as vp
 from video_prediction.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
     replace_read_ops, print_loss_info, transpose_batch_time, add_scalar_summaries, add_summaries
+from video_prediction import tf_utils
 
 
-class SoftPlacementVideoPredictionModel:
+class BaseVideoPredictionModel:
+    def __init__(self, mode='train', hparams_dict=None, hparams=None):
+        """
+        Base video prediction model.
+
+        Trainable and non-trainable video prediction models can be derived
+        from this base class.
+
+        Args:
+            hparams_dict: a dict of `name=value` pairs, where `name` must be
+                defined in `self.get_default_hparams()`.
+            hparams: a string of comma separated list of `name=value` pairs,
+                where `name` must be defined in `self.get_default_hparams()`.
+                These values overrides any values in hparams_dict (if any).
+        """
+        self.mode = mode
+        self.hparams = self.parse_hparams(hparams_dict, hparams)
+        if not self.hparams.context_frames:
+            raise ValueError('Invalid context_frames %r. It might have to be '
+                             'specified.' % self.hparams.context_frames)
+        if not self.hparams.sequence_length:
+            raise ValueError('Invalid sequence_length %r. It might have to be '
+                             'specified.' % self.hparams.sequence_length)
+
+        # member variables that should be set by `self.build_graph`
+        self.inputs = None
+        self.targets = None
+        self.gen_images = None
+        self.outputs = None
+        self.metrics = None
+
+    def get_default_hparams_dict(self):
+        """
+        The keys of this dict define valid hyperparameters for instances of
+        this class. A class inheriting from this one should override this
+        method if it has a different set of hyperparameters.
+
+        Returns:
+            A dict with the following hyperparameters.
+
+            context_frames: the number of ground-truth frames to pass in at
+                start. Must be specified during instantiation.
+            sequence_length: the number of frames in the video sequence,
+                including the context frames, so this model predicts
+                `sequence_length - context_frames` future frames. Must be
+                specified during instantiation.
+        """
+        hparams = dict(
+            context_frames=0,
+            sequence_length=0,
+        )
+        return hparams
+
+    def get_default_hparams(self):
+        return HParams(**self.get_default_hparams_dict())
+
+    def parse_hparams(self, hparams_dict, hparams):
+        parsed_hparams = self.get_default_hparams().set_from_map(hparams_dict or {})
+        if hparams:
+            if not isinstance(hparams, (list, tuple)):
+                hparams = [hparams]
+            for hparam in hparams:
+                parsed_hparams.parse(hparam)
+        return parsed_hparams
+
+    def build_graph(self, inputs, targets=None):
+        raise NotImplementedError
+
+    def metrics_fn(self, inputs, outputs, targets):
+        hparams = self.hparams
+        maybe_slice = lambda x: x[hparams.context_frames - hparams.sequence_length:] if x.shape.ndims > 0 else x
+        outputs = {name: maybe_slice(output) for name, output in outputs.items()}
+        metrics = OrderedDict()
+        target_images = targets
+        gen_images = outputs['gen_images']
+        metrics['psnr'] = vp.metrics.peak_signal_to_noise_ratio(target_images, gen_images)
+        metrics['mse'] = vp.metrics.mean_squared_error(target_images, gen_images)
+        metrics['ssim'] = vp.metrics.structural_similarity(target_images, gen_images)
+        return metrics
+
+
+class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
     def __init__(self,
                  generator_fn,
                  discriminator_fn=None,
@@ -20,10 +102,11 @@ class SoftPlacementVideoPredictionModel:
                  discriminator_scope='discriminator',
                  encoder_scope='encoder',
                  discriminator_encoder_scope='discriminator_encoder',
+                 mode='train',
                  hparams_dict=None,
                  hparams=None):
         """
-        Video prediction model with automatically chosen devices.
+        Trainable video prediction model with automatic device placement.
 
         The devices for the ops in `self.build_graph` are automatically chosen
         by TensorFlow, i.e. `tf.device` is not specified.
@@ -43,13 +126,7 @@ class SoftPlacementVideoPredictionModel:
                 where `name` must be defined in `self.get_default_hparams()`.
                 These values overrides any values in hparams_dict (if any).
         """
-        self.hparams = self.get_default_hparams().set_from_map(hparams_dict or {}).parse(hparams or '')
-        if not self.hparams.context_frames:
-            raise ValueError('Invalid context_frames %r. It might have to be '
-                             'specified.' % self.hparams.context_frames)
-        if not self.hparams.sequence_length:
-            raise ValueError('Invalid sequence_length %r. It might have to be '
-                             'specified.' % self.hparams.sequence_length)
+        super(SoftPlacementVideoPredictionModel, self).__init__(mode, hparams_dict, hparams)
 
         self.generator_fn = functools.partial(generator_fn, hparams=self.hparams)
         self.encoder_fn = functools.partial(encoder_fn, hparams=self.hparams) if encoder_fn else None
@@ -89,19 +166,16 @@ class SoftPlacementVideoPredictionModel:
             self.kl_weight = None
 
         # member variables that should be set by `self.build_graph`
-        self.inputs = None
-        self.targets = None
-        self.gen_images = None
+        # (in addition to the ones in the base class)
         self.gen_images_enc = None
-        self.outputs = None
         self.g_losses = None
         self.d_losses = None
-        self.metrics = None
         self.g_loss = None
         self.d_loss = None
         self.g_vars = None
         self.d_vars = None
         self.train_op = None
+        self.restore_op = None
 
     def get_default_hparams_dict(self):
         """
@@ -155,9 +229,6 @@ class SoftPlacementVideoPredictionModel:
             beta2=0.999,
         )
         return hparams
-
-    def get_default_hparams(self):
-        return HParams(**self.get_default_hparams_dict())
 
     def tower_fn(self, inputs, targets=None):
         """
@@ -304,7 +375,8 @@ class SoftPlacementVideoPredictionModel:
             self.train_op = None
 
         add_summaries({name: tensor for name, tensor in self.inputs.items() if tensor.shape.ndims >= 4})
-        add_summaries({'targets': self.targets})
+        if self.targets is not None:
+            add_summaries({'targets': self.targets})
         add_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims >= 4})
         add_scalar_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims == 0})
         add_scalar_summaries(self.d_losses)
@@ -385,23 +457,26 @@ class SoftPlacementVideoPredictionModel:
                 discrim_losses["discrim%s_vae_gan_loss" % infix] = (discrim_vae_gan_loss, vae_gan_weight)
         return discrim_losses
 
-    def metrics_fn(self, inputs, outputs, targets):
-        hparams = self.hparams
-        maybe_slice = lambda x: x[hparams.context_frames - hparams.sequence_length:] if x.shape.ndims > 0 else x
-        outputs = {name: maybe_slice(output) for name, output in outputs.items()}
-        metrics = OrderedDict()
-        target_images = targets
-        gen_images = outputs['gen_images']
-        metrics['psnr'] = vp.metrics.peak_signal_to_noise_ratio(target_images, gen_images)
-        metrics['mse'] = vp.metrics.mean_squared_error(target_images, gen_images)
-        metrics['ssim'] = vp.metrics.structural_similarity(target_images, gen_images)
-        return metrics
+    def build_restore_graph(self, checkpoints):
+        if checkpoints:
+            if not isinstance(checkpoints, (list, tuple)):
+                checkpoints = [checkpoints]
+            # automatically skip global_step if more than one checkpoint is provided
+            skip_global_step = len(checkpoints) > 1
+            savers = []
+            for checkpoint in checkpoints:
+                print("creating restore saver from checkpoint %s" % checkpoint)
+                saver, _ = tf_utils.get_checkpoint_restore_saver(checkpoint, skip_global_step=skip_global_step)
+                savers.append(saver)
+            self.restore_op = [saver.saver_def.restore_op_name for saver in savers]
+        else:
+            self.restore_op = None
 
 
 class VideoPredictionModel(SoftPlacementVideoPredictionModel):
     def __init__(self, *args, **kwargs):
         """
-        Video prediction model with multi-GPU support.
+        Trainable video prediction model with multi-GPU device placement.
         """
         super(VideoPredictionModel, self).__init__(*args, **kwargs)
 
@@ -491,7 +566,8 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
             self.g_loss = reduce_tensors(tower_g_loss)
 
         add_summaries({name: tensor for name, tensor in self.inputs.items() if tensor.shape.ndims >= 4})
-        add_summaries({'targets': self.targets})
+        if self.targets is not None:
+            add_summaries({'targets': self.targets})
         add_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims >= 4})
         add_scalar_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims == 0})
         add_scalar_summaries(self.d_losses)

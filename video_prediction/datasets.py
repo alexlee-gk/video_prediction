@@ -11,6 +11,8 @@ from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.data.util import nest
 from tensorflow.python.framework import tensor_shape
 
+from video_prediction import tf_utils
+
 
 class _FixedBatchDataset(dataset_ops.BatchDataset):
     @property
@@ -66,7 +68,7 @@ class VideoDataset:
         self._max_sequence_length = None
         self._dict_message = None
 
-        self.hparams = self.get_default_hparams().set_from_map(hparams_dict or {}).parse(hparams or '')
+        self.hparams = self.parse_hparams(hparams_dict, hparams)
 
     def get_default_hparams_dict(self):
         """
@@ -102,6 +104,15 @@ class VideoDataset:
     def get_default_hparams(self):
         return HParams(**self.get_default_hparams_dict())
 
+    def parse_hparams(self, hparams_dict, hparams):
+        parsed_hparams = self.get_default_hparams().set_from_map(hparams_dict or {})
+        if hparams:
+            if not isinstance(hparams, (list, tuple)):
+                hparams = [hparams]
+            for hparam in hparams:
+                parsed_hparams.parse(hparam)
+        return parsed_hparams
+
     @property
     def jpeg_encoding(self):
         raise NotImplementedError
@@ -121,6 +132,8 @@ class VideoDataset:
             name, shape = name_and_shape
             feature = self._dict_message['features']['feature']
             names = [name_ for name_ in feature.keys() if re.search(name.replace('%d', '(\d+)'), name_) is not None]
+            if not names:
+                raise ValueError('Could not found any feature with name pattern %s.' % name)
             if example_name in self.state_like_names_and_shapes:
                 sequence_length = len(names)
             else:
@@ -162,6 +175,10 @@ class VideoDataset:
                 raise NotImplementedError
         self.state_like_names_and_shapes = OrderedDict([(k, tuple(v)) for k, v in state_like_names_and_shapes.items()])
         self.action_like_names_and_shapes = OrderedDict([(k, tuple(v)) for k, v in action_like_names_and_shapes.items()])
+
+        # set sequence_length to the longest possible if it is not specified
+        if not self.hparams.sequence_length:
+            self.hparams.sequence_length = (self._max_sequence_length - 1) // (self.hparams.frame_skip + 1) + 1
 
     def parser(self, serialized_example):
         """Parses a single tf.Example into images, states, actions, etc tensors."""
@@ -205,10 +222,6 @@ class VideoDataset:
             for example_name, (name, shape) in self.action_like_names_and_shapes.items():
                 action_like_seqs[example_name].append(features[name % i])
 
-        # set sequence_length to the longest possible if it is not specified
-        if not self.hparams.sequence_length:
-            self.hparams.sequence_length = (self._max_sequence_length - 1) // (self.hparams.frame_skip + 1) + 1
-
         # handle random shifting and frame skip
         sequence_length = self.hparams.sequence_length
         frame_skip = self.hparams.frame_skip
@@ -244,9 +257,6 @@ class VideoDataset:
     def make_batch(self, batch_size):
         filenames = self.filenames
         dataset = tf.data.TFRecordDataset(filenames).repeat(self.num_epochs)
-
-        self._check_or_infer_shapes()
-
         dataset = dataset.map(self.parser, num_parallel_calls=batch_size)
         dataset.prefetch(2 * batch_size)
 
@@ -313,6 +323,7 @@ class GoogleRobotVideoDataset(VideoDataset):
         if self.hparams.use_state:
             self.state_like_names_and_shapes['states'] = 'move/%d/endeffector/vec_pitch_yaw', (5,)
             self.action_like_names_and_shapes['actions'] = 'move/%d/commanded_pose/vec_pitch_yaw', (5,)
+        self._check_or_infer_shapes()
 
     def get_default_hparams_dict(self):
         default_hparams = super(GoogleRobotVideoDataset, self).get_default_hparams_dict()
@@ -352,6 +363,7 @@ class SV2PVideoDataset(VideoDataset):
                 raise ValueError('SV2PVideoDataset does not have states, use_state should be False')
         else:
             raise NotImplementedError
+        self._check_or_infer_shapes()
 
     def get_default_hparams_dict(self):
         default_hparams = super(SV2PVideoDataset, self).get_default_hparams_dict()
@@ -399,12 +411,16 @@ class SoftmotionVideoDataset(VideoDataset):
     """
     def __init__(self, *args, **kwargs):
         super(SoftmotionVideoDataset, self).__init__(*args, **kwargs)
-        self.state_like_names_and_shapes['images'] = '%d/image_view0/encoded', (64, 64, 3)
+        if os.path.basename(self.input_dir).endswith('annotations'):
+            self.state_like_names_and_shapes['images'] = '%d/image_aux1/encoded', (64, 64, 3)
+        else:
+            self.state_like_names_and_shapes['images'] = '%d/image_view0/encoded', (64, 64, 3)
         if self.hparams.use_state:
             self.state_like_names_and_shapes['states'] = '%d/endeffector_pos', (3,)
             self.action_like_names_and_shapes['actions'] = '%d/action', (4,)
-        if os.path.basename(self.input_dir).endswith('annotation'):
+        if os.path.basename(self.input_dir).endswith('annotations'):
             self.state_like_names_and_shapes['object_pos'] = '%d/object_pos', (2,)
+        self._check_or_infer_shapes()
 
     def get_default_hparams_dict(self):
         default_hparams = super(SoftmotionVideoDataset, self).get_default_hparams_dict()
@@ -418,6 +434,28 @@ class SoftmotionVideoDataset(VideoDataset):
     @property
     def jpeg_encoding(self):
         return False
+
+    def parser(self, serialized_example):
+        state_like_seqs, action_like_seqs = super(SoftmotionVideoDataset, self).parser(serialized_example)
+        if 'object_pos' in state_like_seqs:
+            object_pos = state_like_seqs['object_pos']
+            height, width, _ = self.state_like_names_and_shapes['images'][1]
+            pix_distribs = tf_utils.pixel_distribution(object_pos, height, width)
+            state_like_seqs['pix_distribs'] = pix_distribs[..., None]
+        return state_like_seqs, action_like_seqs
+
+
+def get_dataset_class(dataset):
+    dataset_mappings = {
+        'google_robot': 'GoogleRobotVideoDataset',
+        'sv2p': 'SV2PVideoDataset',
+        'softmotion': 'SoftmotionVideoDataset',
+    }
+    dataset_class = dataset_mappings.get(dataset, dataset)
+    dataset_class = globals().get(dataset_class)
+    if dataset_class is None or not issubclass(dataset_class, VideoDataset):
+        raise ValueError('Invalid dataset %s' % dataset)
+    return dataset_class
 
 
 if __name__ == '__main__':
