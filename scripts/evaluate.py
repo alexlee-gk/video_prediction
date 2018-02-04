@@ -216,43 +216,46 @@ def save_servo_results(task_dir, results, model_hparams, sample_start_ind=0, onl
 
 def main():
     """
-    output_dir                              # condition / method
-    ├── prediction                          # task
-    │   ├── inputs
-    │   │   ├── context_image_00000_00.jpg  # indexed by sample index and time step
-    │   │   └── ...
-    │   ├── outputs
-    │   │   ├── gen_image_00000_00.jpg      # predicted images (only the ones in the loss)
-    │   │   └── ...
-    │   └── metrics
-    │       ├── psnr.csv
-    │       ├── mse.csv
-    │       └── ssim.csv
-    ├── servo
-    │   ├── inputs
-    │   │   ├── context_image_00000_00.jpg
-    │   │   ├── ...
-    │   │   ├── goal_image_00000_00.jpg     # only one goal image per sample
-    │   │   └── ...
-    │   ├── outputs
-    │   │   ├── gen_image_00000_00.jpg
-    │   │   ├── ...
-    │   │   ├── gen_image_goal_diff_00000_00.jpg
-    │   │   └── ...
-    │   └── metrics
-    │       ├── action_mse.csv
-    │       └── goal_image_mse.csv
-    └── motion
-        ├── inputs
-        │   ├── pix_distrib_00000_00.jpg
-        │   └── ...
-        ├── outputs
-        │   ├── gen_pix_distrib_00000_00.jpg
-        │   ├── ...
-        │   ├── gen_pix_distrib_overlaid_00000_00.jpg
-        │   └── ...
-        └── metrics
-            └── pix_dist.csv
+    results_dir
+    ├── output_dir                              # condition / method
+    │   ├── prediction                          # task
+    │   │   ├── inputs
+    │   │   │   ├── context_image_00000_00.jpg  # indexed by sample index and time step
+    │   │   │   └── ...
+    │   │   ├── outputs
+    │   │   │   ├── gen_image_00000_00.jpg      # predicted images (only the ones in the loss)
+    │   │   │   └── ...
+    │   │   └── metrics
+    │   │       ├── psnr.csv
+    │   │       ├── mse.csv
+    │   │       └── ssim.csv
+    │   ├── servo
+    │   │   ├── inputs
+    │   │   │   ├── context_image_00000_00.jpg
+    │   │   │   ├── ...
+    │   │   │   ├── goal_image_00000_00.jpg     # only one goal image per sample
+    │   │   │   └── ...
+    │   │   ├── outputs
+    │   │   │   ├── gen_image_00000_00.jpg
+    │   │   │   ├── ...
+    │   │   │   ├── gen_image_goal_diff_00000_00.jpg
+    │   │   │   └── ...
+    │   │   └── metrics
+    │   │       ├── action_mse.csv
+    │   │       └── goal_image_mse.csv
+    │   ├── motion
+    │   │   ├── inputs
+    │   │   │   ├── pix_distrib_00000_00.jpg
+    │   │   │   └── ...
+    │   │   ├── outputs
+    │   │   │   ├── gen_pix_distrib_00000_00.jpg
+    │   │   │   ├── ...
+    │   │   │   ├── gen_pix_distrib_overlaid_00000_00.jpg
+    │   │   │   └── ...
+    │   │   └── metrics
+    │   │       └── pix_dist.csv
+    │   └── ...
+    └── ...
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("results_dir", type=str)
