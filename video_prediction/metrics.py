@@ -28,13 +28,19 @@ def structural_similarity_np(true, pred, k1=0.01, k2=0.03, kernel_size=7, data_r
     return np.mean(ssim, axis=axis)
 
 
-def compute_expectation_np(pix_distrib):
+def expected_pixel_distribution_np(pix_distrib):
     assert pix_distrib.shape[-1] == 1
     pix_distrib = pix_distrib / np.sum(pix_distrib, axis=(-3, -2), keepdims=True)
     height, width = pix_distrib.shape[-3:-1]
     xv, yv = np.meshgrid(np.arange(width), np.arange(height))
     return np.stack([np.sum(yv[:, :, None] * pix_distrib, axis=(-3, -2, -1)),
                      np.sum(xv[:, :, None] * pix_distrib, axis=(-3, -2, -1))], axis=-1)
+
+
+def expected_pixel_distance_np(true_pix_distrib, pred_pix_distribs, axis=None):
+    return np.linalg.norm(expected_pixel_distribution_np(true_pix_distrib) -
+                          expected_pixel_distribution_np(pred_pix_distribs),
+                          axis=axis)
 
 
 def peak_signal_to_noise_ratio(true, pred):

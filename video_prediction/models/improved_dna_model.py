@@ -296,6 +296,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             state_action.append(inputs['actions'])
         if 'states' in inputs:
             # feed in ground_truth state only for first time step
+            # TODO: feed in ground truth states up to context_frames?
             state = tf.cond(tf.equal(t, 0), lambda: inputs['states'], lambda: states['gen_state'])
             state_action.append(state)
 

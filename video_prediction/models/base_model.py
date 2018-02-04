@@ -58,10 +58,12 @@ class BaseVideoPredictionModel:
                 including the context frames, so this model predicts
                 `sequence_length - context_frames` future frames. Must be
                 specified during instantiation.
+            repeat: the number of repeat actions (if applicable).
         """
         hparams = dict(
             context_frames=0,
             sequence_length=0,
+            repeat=1,
         )
         return hparams
 
@@ -200,6 +202,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             beta1: momentum term of Adam.
             beta2: momentum term of Adam.
         """
+        default_hparams = super(SoftPlacementVideoPredictionModel, self).get_default_hparams_dict()
         hparams = dict(
             context_frames=0,
             sequence_length=0,
@@ -228,7 +231,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             beta1=0.9,
             beta2=0.999,
         )
-        return hparams
+        return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
     def tower_fn(self, inputs, targets=None):
         """
