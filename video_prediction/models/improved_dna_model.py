@@ -185,8 +185,9 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             'masks': tf.TensorShape([height, width, 1, num_masks]),
         }
         if 'pix_distribs' in inputs:
-            output_size['gen_pix_distribs'] = tf.TensorShape([height, width, 1])
-            output_size['transformed_pix_distribs'] = tf.TensorShape([height, width, 1, num_masks])
+            num_motions = inputs['pix_distribs'].shape[-1].value
+            output_size['gen_pix_distribs'] = tf.TensorShape([height, width, num_motions])
+            output_size['transformed_pix_distribs'] = tf.TensorShape([height, width, num_motions, num_masks])
         if 'states' in inputs:
             output_size['gen_states'] = inputs['states'].shape[2:]
         self._output_size = output_size
@@ -219,7 +220,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         if 'zs' in inputs and self.hparams.use_lstm_z:
             state_size['lstm_z_state'] = tf.nn.rnn_cell.LSTMStateTuple(*[tf.TensorShape([self.hparams.nz])] * 2)
         if 'pix_distribs' in inputs:
-            state_size['gen_pix_distrib'] = tf.TensorShape([height, width, 1])
+            state_size['gen_pix_distrib'] = tf.TensorShape([height, width, num_motions])
         if 'states' in inputs:
             state_size['gen_state'] = inputs['states'].shape[2:]
         self._state_size = state_size

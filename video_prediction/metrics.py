@@ -29,7 +29,6 @@ def structural_similarity_np(true, pred, k1=0.01, k2=0.03, kernel_size=7, data_r
 
 
 def expected_pixel_distribution_np(pix_distrib):
-    assert pix_distrib.shape[-1] == 1
     pix_distrib = pix_distrib / np.sum(pix_distrib, axis=(-3, -2), keepdims=True)
     height, width = pix_distrib.shape[-3:-1]
     xv, yv = np.meshgrid(np.arange(width), np.arange(height))

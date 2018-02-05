@@ -172,17 +172,15 @@ def save_motion_results(task_dir, results, model_hparams, draw_center=False,
     context_images, images = np.split(results['images'], [context_frames], axis=1)
     gen_images = results['gen_images'][:, context_frames - sequence_length:]
     initial_pix_distrib = results['pix_distribs'][:, 0:1]
-    save_image_sequences(os.path.join(task_dir, 'inputs', 'pix_distrib'),
-                         initial_pix_distrib, sample_start_ind=sample_start_ind)
-    save_image_sequences(os.path.join(task_dir, 'outputs', 'gen_pix_distrib'),
-                         gen_pix_distribs, sample_start_ind=sample_start_ind)
-
-    centers = compute_expectation_np(initial_pix_distrib) if draw_center else None
-    save_image_sequences(os.path.join(task_dir, 'inputs', 'pix_distrib'),
-                         context_images[:, 0:1], initial_pix_distrib, centers, sample_start_ind=sample_start_ind)
-    centers = compute_expectation_np(gen_pix_distribs) if draw_center else None
-    save_image_sequences(os.path.join(task_dir, 'outputs', 'gen_pix_distrib_overlaid'),
-                         gen_images, gen_pix_distribs, centers, sample_start_ind=sample_start_ind)
+    num_motions = pix_distribs.shape[-1]
+    for i in range(num_motions):
+        output_name_posfix = '%d' % i if num_motions > 1 else ''
+        centers = compute_expectation_np(initial_pix_distrib[..., i:i + 1]) if draw_center else None
+        save_image_sequences(os.path.join(task_dir, 'inputs', 'pix_distrib%s' % output_name_posfix),
+                             context_images[:, 0:1], initial_pix_distrib[..., i:i + 1], centers, sample_start_ind=sample_start_ind)
+        centers = compute_expectation_np(gen_pix_distribs[..., i:i + 1]) if draw_center else None
+        save_image_sequences(os.path.join(task_dir, 'outputs', 'gen_pix_distrib%s' % output_name_posfix),
+                             gen_images, gen_pix_distribs[..., i:i + 1], centers, sample_start_ind=sample_start_ind)
 
 
 def save_servo_results(task_dir, results, model_hparams, sample_start_ind=0, only_metrics=False):
@@ -401,7 +399,7 @@ def main():
                         save_prediction_results(os.path.join(output_dir, 'prediction' + subtask),
                                                 results, model.hparams, sample_ind, args.only_metrics)
                     if 'motion' in tasks:
-                        draw_center = isinstance(model, models.NonTrainableVideoPredictionModel),
+                        draw_center = isinstance(model, models.NonTrainableVideoPredictionModel)
                         save_motion_results(os.path.join(output_dir, 'motion' + subtask),
                                             results, model.hparams, draw_center, sample_ind, args.only_metrics)
             else:
@@ -410,7 +408,7 @@ def main():
                     save_prediction_results(os.path.join(output_dir, 'prediction'),
                                             results, model.hparams, sample_ind, args.only_metrics)
                 if 'motion' in tasks:
-                    draw_center = isinstance(model, models.NonTrainableVideoPredictionModel),
+                    draw_center = isinstance(model, models.NonTrainableVideoPredictionModel)
                     save_motion_results(os.path.join(output_dir, 'motion'),
                                         results, model.hparams, draw_center, sample_ind, args.only_metrics)
 

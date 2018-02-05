@@ -411,15 +411,12 @@ class SoftmotionVideoDataset(VideoDataset):
     """
     def __init__(self, *args, **kwargs):
         super(SoftmotionVideoDataset, self).__init__(*args, **kwargs)
-        if os.path.basename(self.input_dir).endswith('annotations'):
-            self.state_like_names_and_shapes['images'] = '%d/image_aux1/encoded', (64, 64, 3)
-        else:
-            self.state_like_names_and_shapes['images'] = '%d/image_view0/encoded', (64, 64, 3)
+        self.state_like_names_and_shapes['images'] = '%d/image_view0/encoded', (64, 64, 3)
         if self.hparams.use_state:
             self.state_like_names_and_shapes['states'] = '%d/endeffector_pos', (3,)
             self.action_like_names_and_shapes['actions'] = '%d/action', (4,)
         if os.path.basename(self.input_dir).endswith('annotations'):
-            self.state_like_names_and_shapes['object_pos'] = '%d/object_pos', (2,)
+            self.state_like_names_and_shapes['object_pos'] = '%d/object_pos', None  # shape is (2 * num_designated_pixels)
         self._check_or_infer_shapes()
 
     def get_default_hparams_dict(self):
@@ -440,8 +437,10 @@ class SoftmotionVideoDataset(VideoDataset):
         if 'object_pos' in state_like_seqs:
             object_pos = state_like_seqs['object_pos']
             height, width, _ = self.state_like_names_and_shapes['images'][1]
-            pix_distribs = tf_utils.pixel_distribution(object_pos, height, width)
-            state_like_seqs['pix_distribs'] = pix_distribs[..., None]
+            object_pos = tf.reshape(object_pos, [object_pos.shape[0].value, -1, 2])
+            pix_distribs = tf.stack([tf_utils.pixel_distribution(object_pos_, height, width)
+                                     for object_pos_ in tf.unstack(object_pos, axis=1)], axis=-1)
+            state_like_seqs['pix_distribs'] = pix_distribs
         return state_like_seqs, action_like_seqs
 
 
