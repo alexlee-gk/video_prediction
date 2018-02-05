@@ -129,8 +129,10 @@ def main():
 
     if args.method_dirs is None:
         unsorted_method_dirs = os.listdir(args.results_dir)
-        if 'web' in unsorted_method_dirs:
-            unsorted_method_dirs.remove('web')
+        # exclude web_dir and all directories that starts with web
+        if args.web_dir in unsorted_method_dirs:
+            unsorted_method_dirs.remove(args.web_dir)
+        unsorted_method_dirs = [method_dir for method_dir in unsorted_method_dirs if not os.path.basename(method_dir).startswith('web')]
         # put ground_truth and repeat in the front (if any)
         method_dirs = []
         for first_method_dir in ['ground_truth', 'repeat']:
@@ -155,6 +157,8 @@ def main():
         sort_criterion, method_ids, method_names, method_dirs = \
             zip(*sorted(zip(sort_criterion, range(len(method_names)), method_names, method_dirs)))
         webpage.add_header3('sorted by %s, %s' % tuple(args.sort_by))
+    else:
+        method_ids = range(len(method_names))
 
     # infer task and metric names from first method
     metric_fnames = sorted(glob.glob('%s/*/metrics/*.csv' % glob.escape(method_dirs[0])))
