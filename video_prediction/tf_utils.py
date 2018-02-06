@@ -2,7 +2,7 @@ import itertools
 import os
 import tempfile
 from collections import OrderedDict
-
+from video_prediction.utils import ffmpeg_gif
 import moviepy.editor as mpy
 import numpy as np
 import six
@@ -202,12 +202,7 @@ def convert_tensor_to_gif_summary(summ):
         if len(images_arr.shape) != 4:
             raise ValueError('Tensors must be 4-D or 5-D for gif summary.')
 
-        clip = mpy.ImageSequenceClip(list(images_arr), fps=4)
-        with tempfile.NamedTemporaryFile() as f:
-            filename = f.name + '.gif'
-        clip.write_gif(filename, verbose=False)
-        with open(filename, 'rb') as f:
-            encoded_image_string = f.read()
+        encoded_image_string = ffmpeg_gif.encode_gif(images_arr, fps=4)
 
         image = tf.Summary.Image()
         image.height = images_arr.shape[-3]

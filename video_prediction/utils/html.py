@@ -57,7 +57,7 @@ class HTML:
                             if txt is not None:
                                 p(txt)
 
-    def add_images(self, ims, txts, links, height=None, width=400):
+    def add_images(self, ims, txts, links, colspans=None, height=None, width=400):
         image_style = ''
         if height is not None:
             image_style += "height:%dpx;" % height
@@ -67,8 +67,13 @@ class HTML:
             self.add_table()
         with self.t:
             with tr():
-                for im, txt, link in zip(ims, txts, links):
-                    with td(style="word-wrap: break-word;", halign="center", valign="top"):
+                if colspans:
+                    assert len(txts) == len(colspans)
+                    colspans = [dict(colspan=str(colspan)) for colspan in colspans]
+                else:
+                    colspans = [dict()] * len(txts)
+                for im, txt, link, colspan in zip(ims, txts, links, colspans):
+                    with td(style="word-wrap: break-word;", halign="center", valign="top", **colspan):
                         with p():
                             if im is not None and link is not None:
                                 with a(href=os.path.join('images', link)):

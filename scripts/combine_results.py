@@ -1,11 +1,13 @@
 import argparse
 import glob
+import itertools
 import os
 
 import cv2
 import numpy as np
 
-from video_prediction import html
+from video_prediction.utils import html
+from video_prediction.utils.ffmpeg_gif import save_gif as ffmpeg_save_gif
 
 
 def load_metrics(prefix_fname):
@@ -45,43 +47,6 @@ def save_gif(gif_fname, images, fps=4):
     clip.write_gif(gif_fname)
 
 
-def ffmpeg_save_gif(gif_fname, images, fps=4):
-    """
-    To generate a gif from image files, first generate palette from images
-    and then generate the gif from the images and the palette.
-    ffmpeg -i input_%02d.jpg -vf palettegen -y palette.png
-    ffmpeg -i input_%02d.jpg -i palette.png -lavfi paletteuse -y output.gif
-
-    Alternatively, use a filter to map the input images to both the palette
-    and gif commands, while also passing the palette to the gif command.
-    ffmpeg -i input_%02d.jpg -filter_complex "[0:v]split[x][z];[z]palettegen[y];[x][y]paletteuse" -y output.gif
-
-    To directly pass in numpy images, use rawvideo format and `-i -` option.
-    """
-    from subprocess import Popen, PIPE
-    head, tail = os.path.split(gif_fname)
-    if head and not os.path.exists(head):
-        os.makedirs(head, exist_ok=True)
-    cmd = ['ffmpeg', '-y',
-           '-f', 'rawvideo',
-           '-vcodec', 'rawvideo',
-           '-r', '%.02f' % fps,
-           '-s', '%dx%d' % (images[0].shape[1], images[0].shape[0]),
-           '-pix_fmt', 'rgb24',
-           '-i', '-',
-           '-filter_complex', '[0:v]split[x][z];[z]palettegen[y];[x][y]paletteuse',
-           '-r', '%.02f' % fps,
-           '%s' % gif_fname]
-    proc = Popen(cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-    for image in images:
-        proc.stdin.write(image.tostring())
-    out, err = proc.communicate()
-    if proc.returncode:
-        err = '\n'.join([' '.join(cmd), err.decode('utf8')])
-        raise IOError(err)
-    del proc
-
-
 def concat_images(all_images):
     """
     all_images is a list of lists of images
@@ -116,8 +81,8 @@ def main():
     parser.add_argument("--method_names", type=str, nargs='+', help='method names for the header')
     parser.add_argument("--web_dir", type=str, help='default is results_dir/web')
     parser.add_argument("--sort_by", type=str, nargs=2, help='task and metric name to sort by, e.g. prediction mse')
-    parser.add_argument("--use_ffmpeg", action='store_true')
-    parser.add_argument("--batch_size", type=int, default=16, help="number of samples in batch")
+    parser.add_argument("--no_ffmpeg", action='store_true')
+    parser.add_argument("--batch_size", type=int, default=1, help="number of samples in batch")
     parser.add_argument("--show_se", action='store_true', help="show standard error in the table metrics")
     parser.add_argument("--only_metrics", action='store_true')
     args = parser.parse_args()
@@ -218,14 +183,17 @@ def main():
     webpage.add_table()
     header_txts = ['']
     subheader_txts = ['id']
+    methods_subheader_txts = ['']
     header_colspans = [1]
     subheader_colspans = [1]
+    methods_subheader_colspans = [1]
     for sample_ind in range(num_samples):
         if sample_ind % args.batch_size == 0:
             print("saving samples from %d to %d" % (sample_ind, sample_ind + args.batch_size))
         ims = [None]
         txts = [sample_ind]
         links = [None]
+        colspans = [1]
         for task_name in task_names:
             # load input images from first method
             input_fnames = sorted(glob.glob('%s/inputs/*_%05d_??.jpg' %
@@ -251,26 +219,30 @@ def main():
             # concatenate output images of all the methods
             all_output_images = concat_images(all_output_images)
             # save output images as image sequence or as gif clip
-            output_prefix_fname = os.path.splitext(output_fnames[0])[0][:-3]  # remove _??.jpg
-            output_fname = output_prefix_fname + '.gif'
-            if args.use_ffmpeg:
-                ffmpeg_save_gif(os.path.join(image_dir, output_fname), all_output_images)
-            else:
+            output_fname = os.path.join(task_name, 'outputs', '%s_%05d.gif' % ('_'.join(output_names), sample_ind))
+            if args.no_ffmpeg:
                 save_gif(os.path.join(image_dir, output_fname), all_output_images)
+            else:
+                ffmpeg_save_gif(os.path.join(image_dir, output_fname), all_output_images)
 
             if sample_ind == 0:
                 header_txts.append(task_name)
-                subheader_txts.extend(['inputs', 'outputs (methods %s)' % (','.join(str(method_id) for method_id in method_ids))])
-                header_colspans.append(len(input_fnames) + 1)
-                subheader_colspans.extend([len(input_fnames), 1])
+                subheader_txts.extend(['inputs', 'outputs'])
+                header_colspans.append(len(input_fnames) + len(method_ids) * len(output_names))
+                subheader_colspans.extend([len(input_fnames), len(method_ids) * len(output_names)])
+                method_id_strs = ['%02d' % method_id for method_id in method_ids]
+                methods_subheader_txts.extend([''] + list(itertools.chain(*[method_id_strs] * len(output_names))))
+                methods_subheader_colspans.extend([len(input_fnames)] + [1] * (len(method_ids) * len(output_names)))
             ims.extend(input_fnames + [output_fname])
             txts.extend([None] * (len(input_fnames) + 1))
             links.extend(input_fnames + [output_fname])
+            colspans.extend([1] * len(input_fnames) + [len(method_ids) * len(output_names)])
 
         if sample_ind == 0:
             webpage.add_row(header_txts, header_colspans)
             webpage.add_row(subheader_txts, subheader_colspans)
-        webpage.add_images(ims, txts, links, height=64, width=None)
+            webpage.add_row(methods_subheader_txts, methods_subheader_colspans)
+        webpage.add_images(ims, txts, links, colspans, height=64, width=None)
         if (sample_ind + 1) % args.batch_size == 0:
             webpage.save()
     webpage.save()
