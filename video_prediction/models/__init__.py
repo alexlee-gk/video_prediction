@@ -4,6 +4,8 @@ from .non_trainable_model import NonTrainableVideoPredictionModel
 from .non_trainable_model import GroundTruthVideoPredictionModel, RepeatVideoPredictionModel
 from .pix2pix_model import Pix2PixVideoPredictionModel
 from .improved_dna_model import ImprovedDNAVideoPredictionModel
+from .dna_model import DNAVideoPredictionModel
+from .sna_model import SNAVideoPredictionModel
 
 
 def get_model_class(model):
@@ -12,6 +14,8 @@ def get_model_class(model):
         'repeat': 'RepeatVideoPredictionModel',
         'pix2pix': 'Pix2PixVideoPredictionModel',
         'improved_dna': 'ImprovedDNAVideoPredictionModel',
+        'dna': 'DNAVideoPredictionModel',
+        'sna': 'SNAVideoPredictionModel',
     }
     model_class = model_mappings.get(model, model)
     model_class = globals().get(model_class)

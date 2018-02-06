@@ -204,6 +204,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
         """
         default_hparams = super(SoftPlacementVideoPredictionModel, self).get_default_hparams_dict()
         hparams = dict(
+            batch_size=16,
             context_frames=0,
             sequence_length=0,
             l1_weight=0.0,
