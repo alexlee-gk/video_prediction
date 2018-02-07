@@ -1,5 +1,4 @@
 import glob
-import itertools
 import os
 import re
 from collections import OrderedDict
@@ -7,24 +6,9 @@ from collections import OrderedDict
 import numpy as np
 import tensorflow as tf
 from tensorflow.contrib.training import HParams
-from tensorflow.python.data.ops import dataset_ops
-from tensorflow.python.data.util import nest
-from tensorflow.python.framework import tensor_shape
-
-from video_prediction import tf_utils
 
 
-class _FixedBatchDataset(dataset_ops.BatchDataset):
-    @property
-    def output_shapes(self):
-        input_shapes = self._input_dataset.output_shapes
-        return nest.pack_sequence_as(input_shapes, [
-            tensor_shape.vector(self._batch_size).concatenate(s)
-            for s in nest.flatten(self._input_dataset.output_shapes)
-        ])
-
-
-class VideoDataset:
+class BaseVideoDataset:
     def __init__(self, input_dir, mode='train', num_epochs=None,
                  hparams_dict=None, hparams=None):
         """
@@ -65,8 +49,6 @@ class VideoDataset:
 
         self.state_like_names_and_shapes = OrderedDict()
         self.action_like_names_and_shapes = OrderedDict()
-        self._max_sequence_length = None
-        self._dict_message = None
 
         self.hparams = self.parse_hparams(hparams_dict, hparams)
 
@@ -116,6 +98,75 @@ class VideoDataset:
     @property
     def jpeg_encoding(self):
         raise NotImplementedError
+
+    def parser(self, serialized_example):
+        """
+        Parses a single tf.train.Example or tf.train.SequenceExample into
+        images, states, actions, etc tensors.
+        """
+        raise NotImplementedError
+
+    def make_batch(self, batch_size):
+        filenames = self.filenames
+        dataset = tf.data.TFRecordDataset(filenames).repeat(self.num_epochs)
+        dataset = dataset.map(self.parser, num_parallel_calls=batch_size)
+        dataset.prefetch(2 * batch_size)
+
+        # Potentially shuffle records.
+        if self.mode == 'train':
+            # min_queue_examples = int(
+            #     self.num_examples_per_epoch() * 0.4)
+            # # Ensure that the capacity is sufficiently large to provide good random
+            # # shuffling.
+            # dataset = dataset.shuffle(buffer_size=min_queue_examples + 3 * batch_size)
+            dataset = dataset.shuffle(buffer_size=4096)
+
+        dataset = dataset.batch(batch_size)
+        iterator = dataset.make_one_shot_iterator()
+        state_like_batches, action_like_batches = iterator.get_next()
+
+        input_batches = OrderedDict(list(state_like_batches.items()) + list(action_like_batches.items()))
+        for input_batch in input_batches.values():
+            input_batch.set_shape([batch_size] + input_batch.shape.as_list()[1:])
+        target_batches = state_like_batches['images'][:, self.hparams.context_frames:]
+        return input_batches, target_batches
+
+    def preprocess_image(self, image):
+        """Preprocess a single image in [height, width, depth] layout."""
+        image_shape = image.get_shape().as_list()
+        crop_size = self.hparams.crop_size
+        scale_size = self.hparams.scale_size
+        if not crop_size:
+            crop_size = min(image_shape[0], image_shape[1])
+        image = tf.image.resize_image_with_crop_or_pad(image, crop_size, crop_size)
+        image = tf.reshape(image, [crop_size, crop_size, 3])
+        if scale_size:
+            # upsample with bilinear interpolation but downsample with area interpolation
+            if crop_size < scale_size:
+                image = tf.image.resize_images(image, [scale_size, scale_size],
+                                               method=tf.image.ResizeMethod.BILINEAR)
+            elif crop_size > scale_size:
+                image = tf.image.resize_images(image, [scale_size, scale_size],
+                                               method=tf.image.ResizeMethod.AREA)
+            else:
+                # image remains unchanged
+                pass
+        return image
+
+    def num_examples_per_epoch(self):
+        raise NotImplementedError
+
+
+class VideoDataset(BaseVideoDataset):
+    """
+    This class supports reading tfrecords where a sequence is stored as
+    multiple tf.train.Example and each of them is stored under a different
+    feature name (which is indexed by the time step).
+    """
+    def __init__(self, *args, **kwargs):
+        super(VideoDataset, self).__init__(*args, **kwargs)
+        self._max_sequence_length = None
+        self._dict_message = None
 
     def _check_or_infer_shapes(self):
         """
@@ -181,7 +232,9 @@ class VideoDataset:
             self.hparams.sequence_length = (self._max_sequence_length - 1) // (self.hparams.frame_skip + 1) + 1
 
     def parser(self, serialized_example):
-        """Parses a single tf.Example into images, states, actions, etc tensors."""
+        """
+        Parses a single tf.train.Example into images, states, actions, etc tensors.
+        """
         features = dict()
         for i in range(self._max_sequence_length):
             for example_name, (name, shape) in self.state_like_names_and_shapes.items():
@@ -254,217 +307,103 @@ class VideoDataset:
 
         return state_like_seqs, action_like_seqs
 
-    def make_batch(self, batch_size):
-        filenames = self.filenames
-        dataset = tf.data.TFRecordDataset(filenames).repeat(self.num_epochs)
-        dataset = dataset.map(self.parser, num_parallel_calls=batch_size)
-        dataset.prefetch(2 * batch_size)
 
-        # Potentially shuffle records.
-        if self.mode == 'train':
-            # min_queue_examples = int(
-            #     self.num_examples_per_epoch() * 0.4)
-            # # Ensure that the capacity is sufficiently large to provide good random
-            # # shuffling.
-            # dataset = dataset.shuffle(buffer_size=min_queue_examples + 3 * batch_size)
-            dataset = dataset.shuffle(buffer_size=4096)
-
-        dataset = _FixedBatchDataset(dataset, batch_size)
-        iterator = dataset.make_one_shot_iterator()
-        state_like_batches, action_like_batches = iterator.get_next()
-
-        input_batches = OrderedDict(list(state_like_batches.items()) + list(action_like_batches.items()))
-        target_batches = state_like_batches['images'][:, self.hparams.context_frames:]
-        return input_batches, target_batches
-
-    def preprocess_image(self, image):
-        """Preprocess a single image in [height, width, depth] layout."""
-        image_shape = image.get_shape().as_list()
-        crop_size = self.hparams.crop_size
-        scale_size = self.hparams.scale_size
-        if not crop_size:
-            crop_size = min(image_shape[0], image_shape[1])
-        image = tf.image.resize_image_with_crop_or_pad(image, crop_size, crop_size)
-        image = tf.reshape(image, [crop_size, crop_size, 3])
-        if scale_size:
-            # upsample with bilinear interpolation but downsample with area interpolation
-            if crop_size < scale_size:
-                image = tf.image.resize_images(image, [scale_size, scale_size],
-                                               method=tf.image.ResizeMethod.BILINEAR)
-            elif crop_size > scale_size:
-                image = tf.image.resize_images(image, [scale_size, scale_size],
-                                               method=tf.image.ResizeMethod.AREA)
-            else:
-                # image remains unchanged
-                pass
-        return image
-
-    def num_examples_per_epoch(self):
-        # extract information from filename to count the number of trajectories in the dataset
-        count = 0
-        for filename in self.filenames:
-            match = re.search('traj_(\d+)_to_(\d+).tfrecords', os.path.basename(filename))
-            start_traj_iter = int(match.group(1))
-            end_traj_iter = int(match.group(2))
-            count += end_traj_iter - start_traj_iter + 1
-
-        # alternatively, the dataset size can be determined like this, but it's very slow
-        # count = sum(sum(1 for _ in tf.python_io.tf_record_iterator(filename)) for filename in filenames)
-        return count
-
-
-class GoogleRobotVideoDataset(VideoDataset):
+class SequenceExampleVideoDataset(BaseVideoDataset):
     """
-    https://sites.google.com/site/brainrobotdata/home/push-dataset
+    This class supports reading tfrecords where an entire sequence is stored as
+    a single tf.train.SequenceExample.
     """
-    def __init__(self, *args, **kwargs):
-        super(GoogleRobotVideoDataset, self).__init__(*args, **kwargs)
-        self.state_like_names_and_shapes['images'] = 'move/%d/image/encoded', (512, 640, 3)
-        if self.hparams.use_state:
-            self.state_like_names_and_shapes['states'] = 'move/%d/endeffector/vec_pitch_yaw', (5,)
-            self.action_like_names_and_shapes['actions'] = 'move/%d/commanded_pose/vec_pitch_yaw', (5,)
-        self._check_or_infer_shapes()
-
-    def get_default_hparams_dict(self):
-        default_hparams = super(GoogleRobotVideoDataset, self).get_default_hparams_dict()
-        hparams = dict(
-            context_frames=2,
-            sequence_length=15,
-        )
-        return dict(itertools.chain(default_hparams.items(), hparams.items()))
-
-    def num_examples_per_epoch(self):
-        if os.path.basename(self.input_dir) == 'push_train':
-            count = 51615
-        elif os.path.basename(self.input_dir) == 'push_testseen':
-            count = 1038
-        elif os.path.basename(self.input_dir) == 'push_testnovel':
-            count = 995
-        else:
-            raise NotImplementedError
-        return count
-
-    @property
-    def jpeg_encoding(self):
-        return True
-
-
-class SV2PVideoDataset(VideoDataset):
-    def __init__(self, *args, **kwargs):
-        super(SV2PVideoDataset, self).__init__(*args, **kwargs)
-        self.dataset_name = os.path.basename(os.path.split(self.input_dir)[0])
-        self.state_like_names_and_shapes['images'] = 'image_%d', (64, 64, 3)
-        if self.dataset_name == 'shape':
-            if self.hparams.use_state:
-                self.state_like_names_and_shapes['states'] = 'state_%d', (2,)
-                self.action_like_names_and_shapes['actions'] = 'action_%d', (2,)
-        elif self.dataset_name == 'humans':
-            if self.hparams.use_state:
-                raise ValueError('SV2PVideoDataset does not have states, use_state should be False')
-        else:
-            raise NotImplementedError
-        self._check_or_infer_shapes()
-
-    def get_default_hparams_dict(self):
-        default_hparams = super(SV2PVideoDataset, self).get_default_hparams_dict()
-        if self.dataset_name == 'shape':
-            hparams = dict()
-        elif self.dataset_name == 'humans':
-            hparams = dict(
-                context_frames=10,
-                sequence_length=20,
-                use_state=False,
-            )
-        else:
-            raise NotImplementedError
-        return dict(itertools.chain(default_hparams.items(), hparams.items()))
-
-    def num_examples_per_epoch(self):
-        if self.dataset_name == 'shape':
-            if os.path.basename(self.input_dir) == 'train':
-                count = 43415
-            elif os.path.basename(self.input_dir) == 'val':
-                count = 2898
-            else:  # shape dataset doesn't have a test set
-                raise NotImplementedError
-        elif self.dataset_name == 'humans':
-            if os.path.basename(self.input_dir) == 'train':
-                count = 23910
-            elif os.path.basename(self.input_dir) == 'val':
-                count = 10472
-            elif os.path.basename(self.input_dir) == 'test':
-                count = 7722
-            else:
-                raise NotImplementedError
-        else:
-            raise NotImplementedError
-        return count
-
-    @property
-    def jpeg_encoding(self):
-        return True
-
-
-class SoftmotionVideoDataset(VideoDataset):
-    """
-    https://sites.google.com/view/sna-visual-mpc
-    """
-    def __init__(self, *args, **kwargs):
-        super(SoftmotionVideoDataset, self).__init__(*args, **kwargs)
-        self.state_like_names_and_shapes['images'] = '%d/image_view0/encoded', (64, 64, 3)
-        if self.hparams.use_state:
-            self.state_like_names_and_shapes['states'] = '%d/endeffector_pos', (3,)
-            self.action_like_names_and_shapes['actions'] = '%d/action', (4,)
-        if os.path.basename(self.input_dir).endswith('annotations'):
-            self.state_like_names_and_shapes['object_pos'] = '%d/object_pos', None  # shape is (2 * num_designated_pixels)
-        self._check_or_infer_shapes()
-
-    def get_default_hparams_dict(self):
-        default_hparams = super(SoftmotionVideoDataset, self).get_default_hparams_dict()
-        hparams = dict(
-            context_frames=2,
-            sequence_length=15,
-            time_shift=2,
-        )
-        return dict(itertools.chain(default_hparams.items(), hparams.items()))
-
-    @property
-    def jpeg_encoding(self):
-        return False
-
     def parser(self, serialized_example):
-        state_like_seqs, action_like_seqs = super(SoftmotionVideoDataset, self).parser(serialized_example)
-        if 'object_pos' in state_like_seqs:
-            object_pos = state_like_seqs['object_pos']
-            height, width, _ = self.state_like_names_and_shapes['images'][1]
-            object_pos = tf.reshape(object_pos, [object_pos.shape[0].value, -1, 2])
-            pix_distribs = tf.stack([tf_utils.pixel_distribution(object_pos_, height, width)
-                                     for object_pos_ in tf.unstack(object_pos, axis=1)], axis=-1)
-            state_like_seqs['pix_distribs'] = pix_distribs
+        """
+        Parses a single tf.train.SequenceExample into images, states, actions, etc tensors.
+        """
+        sequence_features = dict()
+        for example_name, (name, shape) in self.state_like_names_and_shapes.items():
+            if example_name == 'images':  # special handling for image
+                sequence_features[name] = tf.FixedLenSequenceFeature([1], tf.string)
+            else:
+                sequence_features[name] = tf.FixedLenSequenceFeature(shape, tf.float32)
+        for example_name, (name, shape) in self.action_like_names_and_shapes.items():
+            sequence_features[name] = tf.FixedLenSequenceFeature(shape, tf.float32)
+
+        _, sequence_features = tf.parse_single_sequence_example(
+            serialized_example, sequence_features=sequence_features)
+
+        state_like_seqs = OrderedDict()
+        action_like_seqs = OrderedDict()
+        for example_name, (name, shape) in self.state_like_names_and_shapes.items():
+            if example_name == 'images':  # special handling for image
+                def preprocess_image(image_string):
+                    if self.jpeg_encoding:
+                        image_buffer = tf.reshape(image_string, shape=[])
+                        image = tf.image.decode_jpeg(image_buffer, channels=shape[-1])
+                    else:
+                        image = tf.decode_raw(image_string, tf.uint8)
+                    image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+                    image = tf.reshape(image, shape)
+                    image = self.preprocess_image(image)
+                    return image
+                images = tf.map_fn(preprocess_image, sequence_features[name], dtype=tf.float32)
+                state_like_seqs[example_name] = images
+            else:
+                state_like_seqs[example_name] = sequence_features[name]
+        for example_name, (name, shape) in self.action_like_names_and_shapes.items():
+            action_like_seqs[example_name] = sequence_features[name]
+
+        # the sequence_length of this example is determined by the shortest sequence
+        example_sequence_length = []
+        for example_name, seq in state_like_seqs.items():
+            example_sequence_length.append(tf.shape(seq)[0])
+        for example_name, seq in action_like_seqs.items():
+            example_sequence_length.append(tf.shape(seq)[0] + 1)
+        example_sequence_length = tf.reduce_min(example_sequence_length)
+
+        # handle random shifting and frame skip
+        sequence_length = self.hparams.sequence_length
+        frame_skip = self.hparams.frame_skip
+        time_shift = self.hparams.time_shift
+        if time_shift and self.mode == 'train':
+            assert time_shift > 0 and isinstance(time_shift, int)
+            num_shifts = ((example_sequence_length - 1) - (sequence_length - 1) * (frame_skip + 1)) // time_shift
+            assert_message = ('example_sequence_length has to be at least %d when '
+                              'sequence_length=%d, frame_skip=%d.' %
+                              ((sequence_length - 1) * (frame_skip + 1) + 1,
+                               sequence_length, frame_skip))
+            with tf.control_dependencies([tf.assert_greater_equal(num_shifts, 0,
+                    data=[example_sequence_length, num_shifts], message=assert_message)]):
+                t_start = tf.random_uniform([], 0, num_shifts + 1, dtype=tf.int32) * time_shift
+        else:
+            t_start = 0
+        state_like_t_slice = slice(t_start, t_start + (sequence_length - 1) * (frame_skip + 1) + 1, frame_skip + 1)
+        action_like_t_slice = slice(t_start, t_start + (sequence_length - 1) * (frame_skip + 1))
+
+        for example_name, seq in state_like_seqs.items():
+            seq = tf.stack(seq)[state_like_t_slice]
+            seq.set_shape([sequence_length] + seq.shape.as_list()[1:])
+            state_like_seqs[example_name] = seq
+        for example_name, seq in action_like_seqs.items():
+            seq = tf.stack(seq)[action_like_t_slice]
+            seq.set_shape([(sequence_length - 1) * (frame_skip + 1)] + seq.shape.as_list()[1:])
+            # concatenate actions of skipped frames into single macro actions
+            seq = tf.reshape(seq, [sequence_length - 1, -1])
+            action_like_seqs[example_name] = seq
+
         return state_like_seqs, action_like_seqs
 
-
-def get_dataset_class(dataset):
-    dataset_mappings = {
-        'google_robot': 'GoogleRobotVideoDataset',
-        'sv2p': 'SV2PVideoDataset',
-        'softmotion': 'SoftmotionVideoDataset',
-    }
-    dataset_class = dataset_mappings.get(dataset, dataset)
-    dataset_class = globals().get(dataset_class)
-    if dataset_class is None or not issubclass(dataset_class, VideoDataset):
-        raise ValueError('Invalid dataset %s' % dataset)
-    return dataset_class
+    def num_examples_per_epoch(self):
+        return len(self.filenames)
 
 
 if __name__ == '__main__':
     import cv2
+    from video_prediction import datasets
 
     datasets = [
-        GoogleRobotVideoDataset('data/push/push_testseen', mode='test'),
-        SV2PVideoDataset('data/shape', mode='val'),
-        SV2PVideoDataset('data/humans', mode='val'),
-        SoftmotionVideoDataset('data/softmotion30_v1', mode='val'),
+        datasets.GoogleRobotVideoDataset('data/push/push_testseen', mode='test'),
+        datasets.SV2PVideoDataset('data/shape', mode='val'),
+        datasets.SV2PVideoDataset('data/humans', mode='val'),
+        datasets.SoftmotionVideoDataset('data/softmotion30_v1', mode='val'),
+        datasets.KTHVideoDataset('data/kth', mode='val'),
     ]
     batch_size = 4
 
