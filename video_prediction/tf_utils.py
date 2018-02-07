@@ -2,8 +2,7 @@ import itertools
 import os
 import tempfile
 from collections import OrderedDict
-from video_prediction.utils import ffmpeg_gif
-import moviepy.editor as mpy
+
 import numpy as np
 import six
 import tensorflow as tf
@@ -12,6 +11,8 @@ from tensorflow.core.framework import node_def_pb2
 from tensorflow.python.framework import device as pydev
 from tensorflow.python.training import device_setter
 from tensorflow.python.util import nest
+
+from video_prediction.utils import ffmpeg_gif
 
 
 def local_device_setter(num_devices=1,
@@ -201,17 +202,19 @@ def convert_tensor_to_gif_summary(summ):
             images_arr = np.concatenate(list(images_arr), axis=-2)
         if len(images_arr.shape) != 4:
             raise ValueError('Tensors must be 4-D or 5-D for gif summary.')
+        channels = images_arr.shape[-1]
+        if channels < 1 or channels > 4:
+            raise ValueError('Tensors must have 1, 2, 3, or 4 color channels for gif summary.')
 
         encoded_image_string = ffmpeg_gif.encode_gif(images_arr, fps=4)
 
         image = tf.Summary.Image()
         image.height = images_arr.shape[-3]
         image.width = images_arr.shape[-2]
-        image.colorspace = 3  # 'RGB'
+        image.colorspace = channels  # 1: grayscale, 2: grayscale + alpha, 3: RGB, 4: RGBA
         image.encoded_image_string = encoded_image_string
         summary.value.add(tag=tag, image=image)
     return summary
-
 
 
 def compute_averaged_gradients(opt, tower_loss, **kwargs):

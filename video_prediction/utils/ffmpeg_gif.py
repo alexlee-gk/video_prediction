@@ -20,12 +20,13 @@ def save_gif(gif_fname, images, fps):
     head, tail = os.path.split(gif_fname)
     if head and not os.path.exists(head):
         os.makedirs(head, exist_ok=True)
+    h, w, c = images[0].shape
     cmd = ['ffmpeg', '-y',
            '-f', 'rawvideo',
            '-vcodec', 'rawvideo',
            '-r', '%.02f' % fps,
-           '-s', '%dx%d' % (images[0].shape[1], images[0].shape[0]),
-           '-pix_fmt', 'rgb24',
+           '-s', '%dx%d' % (w, h),
+           '-pix_fmt', {1: 'gray', 3: 'rgb24', 4: 'rgba'}[c],
            '-i', '-',
            '-filter_complex', '[0:v]split[x][z];[z]palettegen[y];[x][y]paletteuse',
            '-r', '%.02f' % fps,
@@ -42,12 +43,13 @@ def save_gif(gif_fname, images, fps):
 
 def encode_gif(images, fps):
     from subprocess import Popen, PIPE
+    h, w, c = images[0].shape
     cmd = ['ffmpeg', '-y',
            '-f', 'rawvideo',
            '-vcodec', 'rawvideo',
            '-r', '%.02f' % fps,
-           '-s', '%dx%d' % (images[0].shape[1], images[0].shape[0]),
-           '-pix_fmt', 'rgb24',
+           '-s', '%dx%d' % (w, h),
+           '-pix_fmt', {1: 'gray', 3: 'rgb24', 4: 'rgba'}[c],
            '-i', '-',
            '-filter_complex', '[0:v]split[x][z];[z]palettegen[y];[x][y]paletteuse',
            '-r', '%.02f' % fps,
