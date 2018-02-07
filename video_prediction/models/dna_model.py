@@ -437,7 +437,7 @@ def generator_fn(inputs, hparams=None):
     outputs = {
         'gen_images': tf.stack(gen_images, axis=0),
         'gen_states': tf.stack(gen_states, axis=0),
-        'gen_masks': tf.stack([tf.stack(gen_mask_list, axis=-1) for gen_mask_list in gen_masks], axis=0),
+        'masks': tf.stack([tf.stack(gen_mask_list, axis=-1) for gen_mask_list in gen_masks], axis=0),
     }
     if 'pix_distribs' in inputs:
         outputs['gen_pix_distribs'] = tf.stack(gen_pix_distrib, axis=0)
