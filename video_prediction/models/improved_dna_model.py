@@ -6,11 +6,11 @@ import tensorflow as tf
 from tensorflow.python.util import nest
 
 from video_prediction import ops
-from video_prediction import tf_utils
 from video_prediction.models import VideoPredictionModel
 from video_prediction.models import pix2pix_model, mocogan_model
 from video_prediction.ops import lrelu, dense, pad2d, conv2d, upsample_conv2d, conv_pool2d, flatten, tile_concat, pool2d
 from video_prediction.rnn_ops import BasicConv2DLSTMCell
+from video_prediction.utils import tf_utils
 
 # Amount to use when lower bounding tensors
 RELU_SHIFT = 1e-12

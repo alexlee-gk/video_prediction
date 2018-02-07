@@ -5,9 +5,9 @@ import numpy as np
 import tensorflow as tf
 
 from video_prediction import ops
-from video_prediction import tf_utils
 from video_prediction.models import VideoPredictionModel
 from video_prediction.ops import conv2d, lrelu, flatten
+from video_prediction.utils import tf_utils
 
 
 def create_generator(generator_inputs,

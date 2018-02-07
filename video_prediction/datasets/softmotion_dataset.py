@@ -4,7 +4,7 @@ import re
 
 import tensorflow as tf
 
-from video_prediction import tf_utils
+from video_prediction.utils import tf_utils
 from .base_dataset import VideoDataset
 
 

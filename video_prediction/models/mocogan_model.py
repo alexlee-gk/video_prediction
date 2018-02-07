@@ -1,8 +1,8 @@
 import tensorflow as tf
 
 from video_prediction import ops
-from video_prediction import tf_utils
 from video_prediction.ops import conv2d, conv3d, lrelu, tile_concat
+from video_prediction.utils import tf_utils
 
 
 def create_image_discriminator(images,
