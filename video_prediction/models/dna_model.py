@@ -94,7 +94,7 @@ def construct_model(images,
     lstm_state1, lstm_state2, lstm_state3, lstm_state4 = None, None, None, None
     lstm_state5, lstm_state6, lstm_state7 = None, None, None
 
-    for t, image, action in zip(range(len(images)), images[:-1], actions):
+    for t, action in enumerate(actions):
         # Reuse variables after the first timestep.
         reuse = bool(gen_images)
 
@@ -111,11 +111,11 @@ def construct_model(images,
                     prev_pix_distrib = gen_pix_distrib[-1]
             elif done_warm_start:
                 # Scheduled sampling
-                prev_image = scheduled_sample(image, gen_images[-1], batch_size,
+                prev_image = scheduled_sample(images[t], gen_images[-1], batch_size,
                                               num_ground_truth)
             else:
                 # Always feed in ground_truth
-                prev_image = image
+                prev_image = images[t]
                 if pix_distributions is not None:
                     prev_pix_distrib = pix_distributions[t]
                     # prev_pix_distrib = tf.expand_dims(prev_pix_distrib, -1)

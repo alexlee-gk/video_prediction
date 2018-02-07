@@ -178,9 +178,7 @@ class Prediction_Model(object):
         lstm_state1, lstm_state2, lstm_state3, lstm_state4 = None, None, None, None
         lstm_state5, lstm_state6, lstm_state7 = None, None, None
 
-        t = -1
-        for image, action in zip(self.images[:-1], self.actions):
-            t +=1
+        for t, action in enumerate(self.actions):
             print(t)
             # Reuse variables after the first timestep.
             reuse = bool(self.gen_images)
@@ -200,11 +198,11 @@ class Prediction_Model(object):
                             prev_pix_distrib2 = self.gen_distrib2[-1]
                 elif done_warm_start:
                     # Scheduled sampling
-                    prev_image = scheduled_sample(image, self.gen_images[-1], batch_size,
+                    prev_image = scheduled_sample(self.images[t], self.gen_images[-1], batch_size,
                                                   num_ground_truth)
                 else:
                     # Always feed in ground_truth
-                    prev_image = image
+                    prev_image = self.images[t]
                     if self.pix_distributions1 != None:
                         prev_pix_distrib1 = self.pix_distributions1[t]
                         if 'ndesig' in self.conf:
