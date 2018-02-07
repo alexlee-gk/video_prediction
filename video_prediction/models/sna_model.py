@@ -31,34 +31,6 @@ from video_prediction.models import VideoPredictionModel
 RELU_SHIFT = 1e-12
 
 
-def init_state(inputs,
-               state_shape,
-               dtype=tf.float32,
-               scope=None):
-    """Helper function to create an initial state given inputs.
-    Args:
-        inputs: input Tensor, at least 2D, the first dimension being batch_size
-        state_shape: the shape of the state.
-        state_initializer: Initializer(shape, dtype) for state Tensor.
-        dtype: Optional dtype, needed when inputs is None.
-    Returns:
-        A tensors representing the initial state.
-    """
-    if inputs is not None:
-        # Handle both the dynamic shape as well as the inferred shape.
-        inferred_batch_size = inputs.get_shape().with_rank_at_least(1)[0]
-        dtype = inputs.dtype
-    else:
-        inferred_batch_size = 0
-    with tf.variable_scope(scope):
-        initial_state = tf.get_variable('state',
-                                        shape=[int(inferred_batch_size)] + state_shape,
-                                        initializer=tf.zeros_initializer(dtype),
-                                        trainable=False)
-    initial_state.set_shape([inferred_batch_size] + state_shape)
-    return initial_state
-
-
 @add_arg_scope
 def basic_conv_lstm_cell(inputs,
                          state,
@@ -84,11 +56,8 @@ def basic_conv_lstm_cell(inputs,
     Returns:
         a tuple of tensors representing output and the new state.
     """
-    spatial_size = inputs.get_shape()[1:3]
-    spatial_size = [int(el) for el in spatial_size]  ## new
-
     if state is None:
-        state = init_state(inputs, spatial_size + [2 * num_channels], scope=scope)
+        state = tf.zeros(inputs.get_shape().as_list()[:3] + [2 * num_channels], name='init_state')
 
     with tf.variable_scope(scope,
                            'BasicConvLstmCell',
