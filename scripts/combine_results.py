@@ -83,6 +83,7 @@ def main():
     parser.add_argument("--sort_by", type=str, nargs=2, help='task and metric name to sort by, e.g. prediction mse')
     parser.add_argument("--no_ffmpeg", action='store_true')
     parser.add_argument("--batch_size", type=int, default=1, help="number of samples in batch")
+    parser.add_argument("--num_samples", type=int, help="number of samples for the table of sequence (all of them by default)")
     parser.add_argument("--show_se", action='store_true', help="show standard error in the table metrics")
     parser.add_argument("--only_metrics", action='store_true')
     args = parser.parse_args()
@@ -187,6 +188,7 @@ def main():
     header_colspans = [1]
     subheader_colspans = [1]
     methods_subheader_colspans = [1]
+    num_samples = args.num_samples or num_samples
     for sample_ind in range(num_samples):
         if sample_ind % args.batch_size == 0:
             print("saving samples from %d to %d" % (sample_ind, sample_ind + args.batch_size))
@@ -221,9 +223,9 @@ def main():
             # save output images as image sequence or as gif clip
             output_fname = os.path.join(task_name, 'outputs', '%s_%05d.gif' % ('_'.join(output_names), sample_ind))
             if args.no_ffmpeg:
-                save_gif(os.path.join(image_dir, output_fname), all_output_images)
+                save_gif(os.path.join(image_dir, output_fname), all_output_images, fps=4)
             else:
-                ffmpeg_save_gif(os.path.join(image_dir, output_fname), all_output_images)
+                ffmpeg_save_gif(os.path.join(image_dir, output_fname), all_output_images, fps=4)
 
             if sample_ind == 0:
                 header_txts.append(task_name)
