@@ -310,8 +310,15 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             else:
                 state_action_z.append(inputs['zs'])
 
-        state_action = tf.concat(state_action, axis=-1)
-        state_action_z = tf.concat(state_action_z, axis=-1)
+        def concat(tensors, axis):
+            if len(tensors) == 0:
+                return tf.zeros([batch_size, 0])
+            elif len(tensors) == 1:
+                return tensors[0]
+            else:
+                return tf.concat(tensors, axis=axis)
+        state_action = concat(state_action, axis=-1)
+        state_action_z = concat(state_action_z, axis=-1)
         if 'actions' in inputs:
             gen_input = tile_concat([image, inputs['actions'][:, None, None, :]], axis=-1)
         else:
