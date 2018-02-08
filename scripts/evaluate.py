@@ -285,10 +285,9 @@ def main():
         random.seed(args.seed)
 
     if args.checkpoint:
-        if os.path.isdir(args.checkpoint):
-            checkpoint_dir = args.checkpoint
-        else:
-            checkpoint_dir, _ = os.path.split(args.checkpoint)
+        checkpoint_dir = os.path.normpath(args.checkpoint)
+        if not os.path.isdir(args.checkpoint):
+            checkpoint_dir, _ = os.path.split(checkpoint_dir)
         with open(os.path.join(checkpoint_dir, "options.json")) as f:
             print("loading options from checkpoint %s" % args.checkpoint)
             options = json.loads(f.read())
@@ -404,6 +403,38 @@ def main():
                                             results, model.hparams, draw_center, sample_ind, args.only_metrics)
             else:
                 results = sess.run(fetches, feed_dict=feed_dict)
+                # import IPython; IPython.embed()
+                #
+                # images_ph = input_phs['images']
+                # states_ph = input_phs['states']
+                # actions_ph = input_phs['actions']
+                # images = feed_dict[images_ph]
+                # states = feed_dict[states_ph]
+                # feed_dict[images_ph] = np.repeat(images[0:1], args.batch_size, axis=0)
+                # feed_dict[states_ph] = np.repeat(states[0:1], args.batch_size, axis=0)
+                # r = 0.05
+                # angles = np.linspace(0, 2 * 2 * np.pi, 16, endpoint=False)
+                # actions = np.c_[r * np.cos(angles), r * np.sin(angles), np.zeros((args.batch_size, 2))]
+                # actions = np.repeat(actions[:, None, :], sequence_length - 1, axis=1)
+                # feed_dict[actions_ph] = actions
+                # results = sess.run(fetches, feed_dict=feed_dict)
+                #
+                # first_image = images[0][0]
+                # gen_images = results['gen_images']
+                #
+                # mask = np.mean((gen_images - first_image[None, None]) ** 2, axis=(0, -1))[-1]
+                # # mask = (mask > .25).astype(np.float32)
+                # mask = np.repeat(mask[..., None], 3, axis=-1)
+                #
+                # import cv2
+                # for gen_images_ in gen_images:
+                #     for gen_image in gen_images_:
+                #         image = np.concatenate([gen_image, mask], axis=1)
+                #         image = (image * 255).astype(np.uint8)
+                #         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                #         cv2.imshow('image', image)
+                #         cv2.waitKey(50)
+
                 if 'prediction' in tasks:
                     save_prediction_results(os.path.join(output_dir, 'prediction'),
                                             results, model.hparams, sample_ind, args.only_metrics)
