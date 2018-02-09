@@ -70,11 +70,11 @@ def main():
     images_shape = (12, 64, 64, 3)  # num_frames, height, width, channels
     images = np.random.randint(256, size=images_shape).astype(np.uint8)
 
-    save_gif('output_save.gif', images)
+    save_gif('output_save.gif', images, 4)
     with open('output_save.gif', 'rb') as f:
         string_save = f.read()
 
-    string_encode = encode_gif(images)
+    string_encode = encode_gif(images, 4)
     with open('output_encode.gif', 'wb') as f:
         f.write(string_encode)
 
