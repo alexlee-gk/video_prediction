@@ -289,25 +289,11 @@ def discriminator_fn(targets, inputs=None, hparams=None):
     if inputs is None:
         targets_and_inputs = (targets,)
     else:
-        if hparams.d_context_frames:
-            if hparams.d_use_gt_inputs:
-                gen_inputs = inputs['images'][:hparams.sequence_length - 1]
-            else:
-                gen_inputs = inputs.get('gen_inputs_enc')
-                if gen_inputs is None:
-                    gen_inputs = inputs['gen_inputs']
-            if gen_inputs.shape[0] != targets.shape[0]:
-                assert targets.shape[0].value == (hparams.sequence_length - hparams.context_frames)
-                assert gen_inputs.shape[0].value == (hparams.sequence_length - 1)
-            if hparams.d_context_frames > hparams.context_frames:
-                raise ValueError('d_context_frames cannot be greater than context_frames')
-            gen_inputs_list = []
-            for i in range(hparams.d_context_frames):
-                gen_inputs_list.append(
-                    gen_inputs[hparams.context_frames - hparams.sequence_length - i:gen_inputs.shape[0].value - i])
-            gen_inputs = tf.concat(gen_inputs_list, axis=-1)  # should raise exception if gen_inputs is not big enough
-            if hparams.d_stop_gradient_inputs:
-                gen_inputs = tf.stop_gradient(gen_inputs)
+        if hparams.d_conditional:
+            # exactly one of them should be true
+            assert bool('gen_inputs' in inputs) != bool('gen_inputs_enc' in inputs)
+            gen_inputs = inputs['gen_inputs'] if 'gen_inputs' in inputs else inputs['gen_inputs_enc']
+            gen_inputs = tf.stop_gradient(gen_inputs)
         else:
             gen_inputs = None
         targets_and_inputs = (targets, gen_inputs)
@@ -402,12 +388,12 @@ def generator_fn(inputs, hparams=None):
     (gen_images, gen_inputs), _ = \
         tf.nn.dynamic_rnn(cell, inputs, sequence_length=[hparams.sequence_length - 1] * batch_size,
                           dtype=tf.float32, swap_memory=False, time_major=True)
-    outputs = {'gen_images': gen_images,
-               'gen_inputs': gen_inputs,
-               'ground_truth_sampling_mean': tf.reduce_mean(tf.to_float(cell.ground_truth[hparams.context_frames:]))}
     # the RNN outputs generated images from time step 1 to sequence_length,
     # but generator_fn should only return images past context_frames
-    gen_images = outputs['gen_images'][hparams.context_frames - 1:]
+    outputs = {'gen_images': gen_images[hparams.context_frames - 1:],
+               'gen_inputs': gen_inputs[hparams.context_frames - 1:],
+               'ground_truth_sampling_mean': tf.reduce_mean(tf.to_float(cell.ground_truth[hparams.context_frames:]))}
+    gen_images = outputs['gen_images']
     return gen_images, outputs
 
 
@@ -433,6 +419,7 @@ class Pix2PixVideoPredictionModel(VideoPredictionModel):
             upsample_layer='upsample_conv2d',
             schedule_sampling='inverse_sigmoid',
             schedule_sampling_k=900.0,
-            schedule_sampling_steps=(0, 1e5),
+            schedule_sampling_steps=(0, 100000),
+            d_conditional=True,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))

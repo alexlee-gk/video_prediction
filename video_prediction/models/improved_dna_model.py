@@ -174,10 +174,11 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         gen_input_shape = list(image_shape)
         if 'actions' in inputs:
             gen_input_shape[-1] += inputs['actions'].shape[-1].value
-        num_masks = int(bool(self.hparams.first_image_background)) + \
-                    int(bool(self.hparams.prev_image_background)) + \
-                    int(bool(self.hparams.generate_scratch_image)) + \
-                    self.hparams.num_transformed_images
+        num_masks = self.hparams.num_transformed_images + \
+            int(bool(self.hparams.prev_image_background)) + \
+            int(bool(self.hparams.first_image_background and not self.hparams.context_images_background)) + \
+            (self.hparams.context_frames if self.hparams.context_images_background else 0) + \
+            int(bool(self.hparams.generate_scratch_image))
         output_size = {
             'gen_images': tf.TensorShape(image_shape),
             'gen_inputs': tf.TensorShape(gen_input_shape),
@@ -299,17 +300,19 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         image = tf.where(self.ground_truth[t], inputs['images'], states['gen_image'])  # schedule sampling (if any)
         if 'pix_distribs' in inputs:
             pix_distrib = tf.where(self.ground_truth[t], inputs['pix_distribs'], states['gen_pix_distrib'])
+        if 'states' in inputs:
+            state = tf.where(self.ground_truth[t], inputs['states'], states['gen_state'])
 
         state_action = []
+        state_action_z = []
         if 'actions' in inputs:
             state_action.append(inputs['actions'])
+            state_action_z.append(inputs['actions'])
         if 'states' in inputs:
-            # feed in ground_truth state only for first time step
-            # TODO: feed in ground truth states up to context_frames?
-            state = tf.cond(tf.equal(t, 0), lambda: inputs['states'], lambda: states['gen_state'])
             state_action.append(state)
+            # don't backpropagate the convnet through the state dynamics
+            state_action_z.append(tf.stop_gradient(state))
 
-        state_action_z = list(state_action)
         if 'zs' in inputs:
             if self.hparams.use_rnn_z:
                 with tf.variable_scope('%s_z' % self.hparams.rnn):
@@ -417,11 +420,13 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         with tf.name_scope('transformed_images'):
             transformed_images = []
             if self.hparams.num_transformed_images:
-                transformed_images += apply_kernels(image, kernels, self.hparams.dilation_rate)
+                transformed_images.extend(apply_kernels(image, kernels, self.hparams.dilation_rate))
             if self.hparams.prev_image_background:
                 transformed_images.append(image)
-            if self.hparams.first_image_background:
+            if self.hparams.first_image_background and not self.hparams.context_images_background:
                 transformed_images.append(self.inputs['images'][0])
+            if self.hparams.context_images_background:
+                transformed_images.extend(tf.unstack(self.inputs['images'][:self.hparams.context_frames]))
             if self.hparams.generate_scratch_image:
                 transformed_images.append(scratch_image)
 
@@ -429,11 +434,13 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             with tf.name_scope('transformed_pix_distribs'):
                 transformed_pix_distribs = []
                 if self.hparams.num_transformed_images:
-                    transformed_pix_distribs += apply_kernels(pix_distrib, kernels, self.hparams.dilation_rate)
+                    transformed_pix_distribs.extend(apply_kernels(pix_distrib, kernels, self.hparams.dilation_rate))
                 if self.hparams.prev_image_background:
                     transformed_pix_distribs.append(pix_distrib)
-                if self.hparams.first_image_background:
+                if self.hparams.first_image_background and not self.hparams.context_images_background:
                     transformed_pix_distribs.append(self.inputs['pix_distribs'][0])
+                if self.hparams.context_images_background:
+                    transformed_pix_distribs.extend(tf.unstack(self.inputs['pix_distribs'][:self.hparams.context_frames]))
                 if self.hparams.generate_scratch_image:
                     transformed_pix_distribs.append(pix_distrib)
 
@@ -517,7 +524,8 @@ def generator_fn(inputs, outputs_enc=None, hparams=None):
                                    dtype=tf.float32, swap_memory=False, time_major=True)
     # the RNN outputs generated images from time step 1 to sequence_length,
     # but generator_fn should only return images past context_frames
-    gen_images = outputs['gen_images'][hparams.context_frames - 1:]
+    outputs = {name: output[hparams.context_frames - 1:] for name, output in outputs.items()}
+    gen_images = outputs['gen_images']
     outputs['ground_truth_sampling_mean'] = tf.reduce_mean(tf.to_float(cell.ground_truth[hparams.context_frames:]))
     return gen_images, outputs
 
@@ -541,6 +549,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             ndf=32,
             norm_layer='instance',
             d_downsample_layer='conv_pool2d',
+            d_conditional=True,
             ngf=32,
             transformation='cdna',
             kernel_size=(5, 5),
@@ -548,8 +557,9 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             rnn='lstm',
             conv_rnn='lstm',
             num_transformed_images=4,
-            first_image_background=True,
             prev_image_background=True,
+            first_image_background=True,
+            context_images_background=False,
             generate_scratch_image=True,
             dependent_mask=True,
             schedule_sampling='inverse_sigmoid',
@@ -559,9 +569,6 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             nz=8,
             nef=32,
             use_rnn_z=True,
-            d_context_frames=1,
-            d_stop_gradient_inputs=False,
-            d_use_gt_inputs=False,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 

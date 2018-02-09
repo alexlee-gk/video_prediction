@@ -84,8 +84,6 @@ class BaseVideoPredictionModel:
 
     def metrics_fn(self, inputs, outputs, targets):
         hparams = self.hparams
-        maybe_slice = lambda x: x[hparams.context_frames - hparams.sequence_length:] if x.shape.ndims > 0 else x
-        outputs = {name: maybe_slice(output) for name, output in outputs.items()}
         metrics = OrderedDict()
         target_images = targets
         gen_images = outputs['gen_images']
@@ -389,8 +387,6 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
 
     def generator_loss_fn(self, inputs, outputs, targets):
         hparams = self.hparams
-        maybe_slice = lambda x: x[hparams.context_frames - hparams.sequence_length:] if x.shape.ndims > 0 else x
-        outputs = {name: maybe_slice(output) for name, output in outputs.items()}
         gen_losses = OrderedDict()
         if hparams.l1_weight or hparams.l2_weight:
             gen_images = outputs.get('gen_images_enc', outputs['gen_images'])
@@ -434,8 +430,6 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
 
     def discriminator_loss_fn(self, inputs, outputs, targets):
         hparams = self.hparams
-        maybe_slice = lambda x: x[hparams.context_frames - hparams.sequence_length:] if x.shape.ndims > 0 else x
-        outputs = {name: maybe_slice(output) for name, output in outputs.items()}
         discrim_losses = OrderedDict()
         gan_weights = {'': hparams.gan_weight,
                        '_tuple': hparams.tuple_gan_weight,
