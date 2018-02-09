@@ -165,7 +165,8 @@ class Conv2DGRUCell(tf.nn.rnn_cell.RNNCell):
     https://github.com/tensorflow/tensorflow/blob/r1.4/tensorflow/python/ops/rnn_cell_impl.py
     """
     def __init__(self, input_shape, filters, kernel_size,
-                 activation_fn=tf.tanh, normalizer_fn=None,
+                 activation_fn=tf.tanh,
+                 normalizer_fn=None, separate_norms=True,
                  bias_initializer=None, reuse=None):
         super(Conv2DGRUCell, self).__init__(_reuse=reuse)
         self._input_shape = input_shape
@@ -173,6 +174,7 @@ class Conv2DGRUCell(tf.nn.rnn_cell.RNNCell):
         self._kernel_size = list(kernel_size) if isinstance(kernel_size, (tuple, list)) else [kernel_size] * 2
         self._activation_fn = activation_fn
         self._normalizer_fn = normalizer_fn
+        self._separate_norms = separate_norms
         self._bias_initializer = bias_initializer
         self._size = tensor_shape.TensorShape(self._input_shape[:-1] + [self._filters])
 

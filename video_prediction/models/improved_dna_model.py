@@ -9,7 +9,7 @@ from video_prediction import ops
 from video_prediction.models import VideoPredictionModel
 from video_prediction.models import pix2pix_model, mocogan_model
 from video_prediction.ops import lrelu, dense, pad2d, conv2d, upsample_conv2d, conv_pool2d, flatten, tile_concat, pool2d
-from video_prediction.rnn_ops import BasicConv2DLSTMCell
+from video_prediction.rnn_ops import BasicConv2DLSTMCell, Conv2DGRUCell
 from video_prediction.utils import tf_utils
 
 # Amount to use when lower bounding tensors
@@ -193,32 +193,29 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         self._output_size = output_size
 
         # state_size
-        if self.hparams.lstm_skip_connection:
-            lstm_filters_multiplier = 2
-        else:
-            lstm_filters_multiplier = 1
-        lstm_cell_sizes = []
-        lstm_state_sizes = []
-        lstm_height, lstm_width = height, width
-        for out_channels, use_lstm in self.encoder_layer_specs:
-            lstm_height //= 2
-            lstm_width //= 2
-            if use_lstm:
-                lstm_cell_sizes.append(tf.TensorShape([lstm_height, lstm_width, out_channels]))
-                lstm_state_sizes.append(tf.TensorShape([lstm_height, lstm_width, lstm_filters_multiplier * out_channels]))
-        for out_channels, use_lstm in self.decoder_layer_specs:
-            lstm_height *= 2
-            lstm_width *= 2
-            if use_lstm:
-                lstm_cell_sizes.append(tf.TensorShape([lstm_height, lstm_width, out_channels]))
-                lstm_state_sizes.append(tf.TensorShape([lstm_height, lstm_width, lstm_filters_multiplier * out_channels]))
-        lstm_states_size = [tf.nn.rnn_cell.LSTMStateTuple(lstm_cell_size, lstm_state_size)
-                            for lstm_cell_size, lstm_state_size in zip(lstm_cell_sizes, lstm_state_sizes)]
+        conv_rnn_state_sizes = []
+        conv_rnn_height, conv_rnn_width = height, width
+        for out_channels, use_conv_rnn in self.encoder_layer_specs:
+            conv_rnn_height //= 2
+            conv_rnn_width //= 2
+            if use_conv_rnn:
+                conv_rnn_state_sizes.append(tf.TensorShape([conv_rnn_height, conv_rnn_width, out_channels]))
+        for out_channels, use_conv_rnn in self.decoder_layer_specs:
+            conv_rnn_height *= 2
+            conv_rnn_width *= 2
+            if use_conv_rnn:
+                conv_rnn_state_sizes.append(tf.TensorShape([conv_rnn_height, conv_rnn_width, out_channels]))
+        if self.hparams.conv_rnn == 'lstm':
+            conv_rnn_state_sizes = [tf.nn.rnn_cell.LSTMStateTuple(conv_rnn_state_size, conv_rnn_state_size)
+                                    for conv_rnn_state_size in conv_rnn_state_sizes]
         state_size = {'time': tf.TensorShape([]),
                       'gen_image': tf.TensorShape(image_shape),
-                      'lstm_states': lstm_states_size}
-        if 'zs' in inputs and self.hparams.use_lstm_z:
-            state_size['lstm_z_state'] = tf.nn.rnn_cell.LSTMStateTuple(*[tf.TensorShape([self.hparams.nz])] * 2)
+                      'conv_rnn_states': conv_rnn_state_sizes}
+        if 'zs' in inputs and self.hparams.use_rnn_z:
+            rnn_z_state_size = tf.TensorShape([self.hparams.nz])
+            if self.hparams.rnn == 'lstm':
+                rnn_z_state_size = tf.nn.rnn_cell.LSTMStateTuple(rnn_z_state_size, rnn_z_state_size)
+            state_size['rnn_z_state'] = rnn_z_state_size
         if 'pix_distribs' in inputs:
             state_size['gen_pix_distrib'] = tf.TensorShape([height, width, num_motions])
         if 'states' in inputs:
@@ -260,29 +257,40 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
     def state_size(self):
         return self._state_size
 
-    def _lstm_func(self, inputs, state, num_units):
-        lstm_cell = tf.contrib.rnn.BasicLSTMCell(num_units, reuse=tf.get_variable_scope().reuse)
-        return lstm_cell(inputs, state)
+    def _rnn_func(self, inputs, state, num_units):
+        if self.hparams.rnn == 'lstm':
+            RNNCell = tf.contrib.rnn.BasicLSTMCell
+        elif self.hparams.rnn == 'gru':
+            RNNCell = tf.contrib.rnn.GRUCell
+        else:
+            raise NotImplementedError
+        rnn_cell = RNNCell(num_units, reuse=tf.get_variable_scope().reuse)
+        return rnn_cell(inputs, state)
 
-    def _conv_lstm_func(self, inputs, state, filters):
+    def _conv_rnn_func(self, inputs, state, filters):
         inputs_shape = inputs.get_shape().as_list()
         input_shape = inputs_shape[1:]
         if self.hparams.norm_layer == 'none':
             normalizer_fn = None
         else:
             normalizer_fn = ops.get_norm_layer(self.hparams.norm_layer)
-        lstm_cell = BasicConv2DLSTMCell(input_shape, filters, kernel_size=(5, 5),
-                                        normalizer_fn=normalizer_fn,
-                                        separate_norms=self.hparams.norm_layer == 'layer',
-                                        skip_connection=self.hparams.lstm_skip_connection,
-                                        reuse=tf.get_variable_scope().reuse)
-        return lstm_cell(inputs, state)
+        if self.hparams.conv_rnn == 'lstm':
+            Conv2DRNNCell = BasicConv2DLSTMCell
+        elif self.hparams.conv_rnn == 'gru':
+            Conv2DRNNCell = Conv2DGRUCell
+        else:
+            raise NotImplementedError
+        conv_rnn_cell = Conv2DRNNCell(input_shape, filters, kernel_size=(5, 5),
+                                      normalizer_fn=normalizer_fn,
+                                      separate_norms=self.hparams.norm_layer == 'layer',
+                                      reuse=tf.get_variable_scope().reuse)
+        return conv_rnn_cell(inputs, state)
 
     def call(self, inputs, states):
         norm_layer = ops.get_norm_layer(self.hparams.norm_layer)
         image_shape = inputs['images'].get_shape().as_list()
         batch_size, height, width, color_channels = image_shape
-        lstm_states = states['lstm_states']
+        conv_rnn_states = states['conv_rnn_states']
 
         time = states['time']
         with tf.control_dependencies([tf.assert_equal(time[1:], time[0])]):
@@ -303,10 +311,10 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
 
         state_action_z = list(state_action)
         if 'zs' in inputs:
-            if self.hparams.use_lstm_z:
-                with tf.variable_scope('lstm_z'):
-                    lstm_z, lstm_z_state = self._lstm_func(inputs['zs'], states['lstm_z_state'], self.hparams.nz)
-                state_action_z.append(lstm_z)
+            if self.hparams.use_rnn_z:
+                with tf.variable_scope('%s_z' % self.hparams.rnn):
+                    rnn_z, rnn_z_state = self._rnn_func(inputs['zs'], states['rnn_z_state'], self.hparams.nz)
+                state_action_z.append(rnn_z)
             else:
                 state_action_z.append(inputs['zs'])
 
@@ -325,8 +333,8 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             gen_input = image
 
         layers = []
-        new_lstm_states = []
-        for i, (out_channels, use_lstm) in enumerate(self.encoder_layer_specs):
+        new_conv_rnn_states = []
+        for i, (out_channels, use_conv_rnn) in enumerate(self.encoder_layer_specs):
             with tf.variable_scope('h%d' % i):
                 if i == 0:
                     h = tf.concat([image, self.inputs['images'][0]], axis=-1)
@@ -338,16 +346,16 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                                 out_channels, kernel_size=kernel_size, strides=(2, 2))
                 h = norm_layer(h)
                 h = tf.nn.relu(h)
-            if use_lstm:
-                lstm_state = lstm_states[len(new_lstm_states)]
-                with tf.variable_scope('lstm_h%d' % i):
-                    lstm_h, lstm_state = self._conv_lstm_func(tile_concat([h, state_action_z[:, None, None, :]], axis=-1),
-                                                              lstm_state, out_channels)
-                new_lstm_states.append(lstm_state)
-            layers.append((h, lstm_h) if use_lstm else (h,))
+            if use_conv_rnn:
+                conv_rnn_state = conv_rnn_states[len(new_conv_rnn_states)]
+                with tf.variable_scope('%s_h%d' % (self.hparams.conv_rnn, i)):
+                        conv_rnn_h, conv_rnn_state = self._conv_rnn_func(tile_concat([h, state_action_z[:, None, None, :]], axis=-1),
+                                                              conv_rnn_state, out_channels)
+                new_conv_rnn_states.append(conv_rnn_state)
+            layers.append((h, conv_rnn_h) if use_conv_rnn else (h,))
 
         num_encoder_layers = len(layers)
-        for i, (out_channels, use_lstm) in enumerate(self.decoder_layer_specs):
+        for i, (out_channels, use_conv_rnn) in enumerate(self.decoder_layer_specs):
             with tf.variable_scope('h%d' % len(layers)):
                 if i == 0:
                     h = layers[-1][-1]
@@ -357,14 +365,14 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                                     out_channels, kernel_size=(3, 3), strides=(2, 2))
                 h = norm_layer(h)
                 h = tf.nn.relu(h)
-            if use_lstm:
-                lstm_state = lstm_states[len(new_lstm_states)]
-                with tf.variable_scope('lstm_h%d' % len(layers)):
-                    lstm_h, lstm_state = self._conv_lstm_func(tile_concat([h, state_action_z[:, None, None, :]], axis=-1),
-                                                              lstm_state, out_channels)
-                new_lstm_states.append(lstm_state)
-            layers.append((h, lstm_h) if use_lstm else (h,))
-        assert len(new_lstm_states) == len(lstm_states)
+            if use_conv_rnn:
+                conv_rnn_state = conv_rnn_states[len(new_conv_rnn_states)]
+                with tf.variable_scope('%s_h%d' % (self.hparams.conv_rnn, len(layers))):
+                    conv_rnn_h, conv_rnn_state = self._conv_rnn_func(tile_concat([h, state_action_z[:, None, None, :]], axis=-1),
+                                                              conv_rnn_state, out_channels)
+                new_conv_rnn_states.append(conv_rnn_state)
+            layers.append((h, conv_rnn_h) if use_conv_rnn else (h,))
+        assert len(new_conv_rnn_states) == len(conv_rnn_states)
 
         if self.hparams.num_transformed_images:
             assert len(self.hparams.kernel_size) == 2
@@ -478,9 +486,9 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
 
         new_states = {'time': time + 1,
                       'gen_image': gen_image,
-                      'lstm_states': new_lstm_states}
-        if 'zs' in inputs and self.hparams.use_lstm_z:
-            new_states['lstm_z_state'] = lstm_z_state
+                      'conv_rnn_states': new_conv_rnn_states}
+        if 'zs' in inputs and self.hparams.use_rnn_z:
+            new_states['rnn_z_state'] = rnn_z_state
         if 'pix_distribs' in inputs:
             new_states['gen_pix_distrib'] = gen_pix_distrib
         if 'states' in inputs:
@@ -537,7 +545,8 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             transformation='cdna',
             kernel_size=(5, 5),
             dilation_rate=(1, 1),
-            lstm_skip_connection=False,
+            rnn='lstm',
+            conv_rnn='lstm',
             num_transformed_images=4,
             first_image_background=True,
             prev_image_background=True,
@@ -549,7 +558,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             e_net='legacy',
             nz=8,
             nef=32,
-            use_lstm_z=True,
+            use_rnn_z=True,
             d_context_frames=1,
             d_stop_gradient_inputs=False,
             d_use_gt_inputs=False,
