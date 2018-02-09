@@ -23,7 +23,12 @@ class SV2PVideoDataset(VideoDataset):
     def get_default_hparams_dict(self):
         default_hparams = super(SV2PVideoDataset, self).get_default_hparams_dict()
         if self.dataset_name == 'shape':
-            hparams = dict()
+            hparams = dict(
+                context_frames=1,
+                sequence_length=6,
+                time_shift=0,
+                use_state=False,
+            )
         elif self.dataset_name == 'humans':
             hparams = dict(
                 context_frames=10,
