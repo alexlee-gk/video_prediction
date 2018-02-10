@@ -505,23 +505,38 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
 
 def generator_fn(inputs, outputs_enc=None, hparams=None):
     batch_size = inputs['images'].shape[1].value
-    inputs = OrderedDict([(name, tf_utils.maybe_pad_or_slice(input, hparams.sequence_length - 1))
-                          for name, input in inputs.items()])
+    inputs = {name: tf_utils.maybe_pad_or_slice(input, hparams.sequence_length - 1)
+              for name, input in inputs.items()}
     if hparams.nz:
-        if outputs_enc is None:
-            zs = tf.random_normal([hparams.sequence_length - 1, batch_size, hparams.nz], 0, 1)
-        else:
-            enc_zs_mu = outputs_enc['enc_zs_mu']
-            enc_zs_log_sigma_sq = outputs_enc['enc_zs_log_sigma_sq']
-            eps = tf.random_normal([hparams.sequence_length - 1, batch_size, hparams.nz], 0, 1)
-            zs = enc_zs_mu + tf.sqrt(tf.exp(enc_zs_log_sigma_sq)) * eps
-        inputs['zs'] = zs
+        def sample_zs():
+            if outputs_enc is None:
+                zs = tf.random_normal([hparams.sequence_length - 1, batch_size, hparams.nz], 0, 1)
+            else:
+                enc_zs_mu = outputs_enc['enc_zs_mu']
+                enc_zs_log_sigma_sq = outputs_enc['enc_zs_log_sigma_sq']
+                eps = tf.random_normal([hparams.sequence_length - 1, batch_size, hparams.nz], 0, 1)
+                zs = enc_zs_mu + tf.sqrt(tf.exp(enc_zs_log_sigma_sq)) * eps
+            return zs
+        inputs['zs'] = sample_zs()
     else:
         if outputs_enc is not None:
             raise ValueError('outputs_enc has to be None when nz is 0.')
     cell = DNACell(inputs, hparams)
-    outputs, _ = tf.nn.dynamic_rnn(cell, inputs, sequence_length=[hparams.sequence_length - 1] * batch_size,
-                                   dtype=tf.float32, swap_memory=False, time_major=True)
+    outputs, _ = tf.nn.dynamic_rnn(cell, inputs, dtype=tf.float32,
+                                   swap_memory=False, time_major=True)
+    if hparams.nz:
+        inputs_samples = {name: flatten(tf.tile(input[:, None], [1, hparams.num_samples] + [1] * (input.shape.ndims - 1)), 1, 2)
+                          for name, input in inputs.items() if name != 'zs'}
+        inputs_samples['zs'] = tf.concat([sample_zs() for _ in range(hparams.num_samples)], axis=1)
+        with tf.variable_scope(tf.get_variable_scope(), reuse=True):
+            cell_samples = DNACell(inputs_samples, hparams)
+            outputs_samples, _ = tf.nn.dynamic_rnn(cell_samples, inputs_samples, dtype=tf.float32,
+                                                   swap_memory=False, time_major=True)
+        gen_images_samples = outputs_samples['gen_images']
+        gen_images_samples = tf.stack(tf.split(gen_images_samples, hparams.num_samples, axis=1), axis=-1)
+        gen_images_samples_avg = tf.reduce_mean(gen_images_samples, axis=-1)
+        outputs['gen_images_samples'] = gen_images_samples
+        outputs['gen_images_samples_avg'] = gen_images_samples_avg
     # the RNN outputs generated images from time step 1 to sequence_length,
     # but generator_fn should only return images past context_frames
     outputs = {name: output[hparams.context_frames - 1:] for name, output in outputs.items()}
@@ -567,6 +582,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             schedule_sampling_steps=(0, 100000),
             e_net='legacy',
             nz=8,
+            num_samples=8,
             nef=32,
             use_rnn_z=True,
         )
