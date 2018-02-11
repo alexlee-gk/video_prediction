@@ -113,7 +113,13 @@ def create_acvideo_discriminator(clips,
 
 def discriminator_fn(targets, inputs=None, hparams=None):
     batch_size = targets.shape[0].value
-    t_sample = tf.random_uniform([batch_size], minval=0, maxval=targets.shape[0].value, dtype=tf.int32)
+    # sort of hack to ensure that the same t_sample is used for all the
+    # discriminators that are given the same inputs
+    if 't_sample' in inputs:
+        t_sample = inputs['t_sample']
+    else:
+        t_sample = tf.random_uniform([batch_size], minval=0, maxval=targets.shape[0].value, dtype=tf.int32)
+        inputs['t_sample'] = t_sample
     images_sample = tf.gather_nd(targets, tf.stack([t_sample, tf.range(batch_size)], axis=1))
     # assume that the clips have the same length as the targets
     clips_sample = targets
