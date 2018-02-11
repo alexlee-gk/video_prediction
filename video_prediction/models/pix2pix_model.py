@@ -3,6 +3,7 @@ from collections import OrderedDict
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.util import nest
 
 from video_prediction import ops
 from video_prediction.models import VideoPredictionModel
@@ -214,7 +215,7 @@ def create_legacy_discriminator(discrim_targets, discrim_inputs=None,
             logits = downsample_layer(rectified, out_channels, kernel_size=4, strides=strides)
         layers.append(logits)  # don't apply sigmoid to the logits in case we want to use LSGAN
 
-    return layers[-1]
+    return layers
 
 
 def create_n_layer_discriminator(discrim_targets, discrim_inputs=None,
@@ -253,7 +254,7 @@ def create_n_layer_discriminator(discrim_targets, discrim_inputs=None,
     with tf.variable_scope("layer_%d" % (len(layers) + 1)):
         logits = conv2d(tf.pad(rectified, paddings), 1, kernel_size=4, strides=1, padding='VALID')
         layers.append(logits)  # don't apply sigmoid to the logits in case we want to use LSGAN
-    return layers[-1]
+    return layers
 
 
 def create_discriminator(discrim_targets, discrim_inputs=None, d_net='legacy', **kwargs):
@@ -269,20 +270,20 @@ def create_discriminator(discrim_targets, discrim_inputs=None, d_net='legacy', *
 
     if d_net == 'legacy':
         kwargs.pop('n_layers', None)  # unused
-        logits = create_legacy_discriminator(discrim_targets, discrim_inputs, **kwargs)
+        features = create_legacy_discriminator(discrim_targets, discrim_inputs, **kwargs)
     elif d_net == 'n_layer':
         kwargs.pop('downsample_layer', None)  # unused
         n_layers = kwargs.pop('n_layers', None)
         if not n_layers:
             scale_size = min(*discrim_targets.shape.as_list()[1:3])
             n_layers = int(np.log2(scale_size // 32))
-        logits = create_n_layer_discriminator(discrim_targets, discrim_inputs, n_layers=n_layers, **kwargs)
+        features = create_n_layer_discriminator(discrim_targets, discrim_inputs, n_layers=n_layers, **kwargs)
     else:
         raise ValueError('Invalid discriminator net %s' % d_net)
 
     if should_flatten:
-        logits = tf.reshape(logits, batch_shape + logits.shape.as_list()[1:])
-    return logits
+        features = nest.map_structure(lambda x: tf.reshape(x, batch_shape + x.shape.as_list()[1:]), features)
+    return features
 
 
 def discriminator_fn(targets, inputs=None, hparams=None):
@@ -297,13 +298,17 @@ def discriminator_fn(targets, inputs=None, hparams=None):
         else:
             gen_inputs = None
         targets_and_inputs = (targets, gen_inputs)
-    logits = create_discriminator(*targets_and_inputs,
-                                  d_net=hparams.d_net,
-                                  n_layers=hparams.n_layers,
-                                  ndf=hparams.ndf,
-                                  norm_layer=hparams.norm_layer,
-                                  downsample_layer=hparams.d_downsample_layer)
-    return logits, {'discrim_logits': logits}
+    features = create_discriminator(*targets_and_inputs,
+                                    d_net=hparams.d_net,
+                                    n_layers=hparams.n_layers,
+                                    ndf=hparams.ndf,
+                                    norm_layer=hparams.norm_layer,
+                                    downsample_layer=hparams.d_downsample_layer)
+    features, logits = features[:-1], features[-1]
+    outputs = {'discrim_logits': logits}
+    for i, feature in enumerate(features):
+        outputs['discrim_feature%d' % i] = feature
+    return logits, outputs
 
 
 class Pix2PixCell(tf.nn.rnn_cell.RNNCell):

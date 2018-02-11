@@ -83,7 +83,6 @@ class BaseVideoPredictionModel:
         raise NotImplementedError
 
     def metrics_fn(self, inputs, outputs, targets):
-        hparams = self.hparams
         metrics = OrderedDict()
         target_images = targets
         gen_images = outputs['gen_images']
@@ -218,6 +217,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             video_vae_gan_weight=0.0,
             acvideo_gan_weight=0.0,
             acvideo_vae_gan_weight=0.0,
+            feature_l2_weight=0.0,
             gan_loss_type='LSGAN',
             kl_weight=0.0,
             kl_anneal='none',
@@ -262,8 +262,13 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             discrim_inputs = OrderedDict(list(inputs.items()) + list(gen_outputs.items()))
             with tf.name_scope("real"):
                 with tf.variable_scope(self.discriminator_scope) as discrim_scope:
+                    # pre-update discriminator tensors (i.e. before the discriminator weights have been updated)
                     _, discrim_outputs_real = self.discriminator_fn(targets, discrim_inputs)
                     discrim_outputs_real = OrderedDict([(k + '_real', v) for k, v in discrim_outputs_real.items()])
+                with tf.variable_scope(discrim_scope, reuse=True):
+                    # post-update discriminator tensors (i.e. after the discriminator weights have been updated)
+                    _, discrim_outputs_real_post = self.discriminator_fn(targets, discrim_inputs)
+                    discrim_outputs_real_post = OrderedDict([(k + '_real', v) for k, v in discrim_outputs_real_post.items()])
             with tf.name_scope("fake"):
                 with tf.variable_scope(discrim_scope, reuse=True):
                     # pre-update discriminator tensors (i.e. before the discriminator weights have been updated)
@@ -274,6 +279,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
                     discrim_outputs_fake_post = OrderedDict([(k + '_fake', v) for k, v in discrim_outputs_fake_post.items()])
         else:
             discrim_outputs_real = {}
+            discrim_outputs_real_post = {}
             discrim_outputs_fake = {}
             discrim_outputs_fake_post = {}
 
@@ -282,8 +288,13 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             same_discriminator = self.discriminator_scope == self.discriminator_encoder_scope
             with tf.name_scope("real"), tf.name_scope(self.encoder_scope):
                 with tf.variable_scope(self.discriminator_encoder_scope, reuse=same_discriminator) as discrim_enc_scope:
+                    # pre-update discriminator tensors (i.e. before the discriminator weights have been updated)
                     _, discrim_outputs_enc_real = self.discriminator_fn(targets, discrim_inputs_enc)
                     discrim_outputs_enc_real = OrderedDict([(k + '_enc_real', v) for k, v in discrim_outputs_enc_real.items()])
+                with tf.variable_scope(discrim_enc_scope, reuse=True):
+                    # post-update discriminator tensors (i.e. after the discriminator weights have been updated)
+                    _, discrim_outputs_enc_real_post = self.discriminator_fn(targets, discrim_inputs_enc)
+                    discrim_outputs_enc_real_post = OrderedDict([(k + '_enc_real', v) for k, v in discrim_outputs_enc_real_post.items()])
             with tf.name_scope("fake"), tf.name_scope(self.encoder_scope):
                 with tf.variable_scope(discrim_enc_scope, reuse=True):
                     # pre-update discriminator tensors (i.e. before the discriminator weights have been updated)
@@ -294,6 +305,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
                     discrim_outputs_enc_fake_post = OrderedDict([(k + '_enc_fake', v) for k, v in discrim_outputs_enc_fake_post.items()])
         else:
             discrim_outputs_enc_real = {}
+            discrim_outputs_enc_real_post = {}
             discrim_outputs_enc_fake = {}
             discrim_outputs_enc_fake_post = {}
 
@@ -316,9 +328,12 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             with tf.name_scope("generator_loss"):
                 g_losses = self.generator_loss_fn(inputs, outputs, targets)
                 print_loss_info(g_losses, inputs, outputs, targets)
-                if discrim_outputs_fake_post or discrim_outputs_enc_fake_post:
+                if discrim_outputs_real_post or discrim_outputs_fake_post or \
+                        discrim_outputs_enc_real_post or discrim_outputs_enc_fake_post:
                     outputs_post = OrderedDict(itertools.chain(outputs.items(),
+                                                               discrim_outputs_real_post.items(),
                                                                discrim_outputs_fake_post.items(),
+                                                               discrim_outputs_enc_real_post.items(),
                                                                discrim_outputs_enc_fake_post.items()))
                     g_losses_post = self.generator_loss_fn(inputs, outputs_post, targets)
                 else:
@@ -411,6 +426,16 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             if gan_weight:
                 gen_gan_loss = vp.losses.gan_loss(outputs['discrim%s_logits_fake' % infix], 1.0, hparams.gan_loss_type)
                 gen_losses["gen%s_gan_loss" % infix] = (gen_gan_loss, gan_weight)
+            if hparams.feature_l2_weight:
+                i_feature = 0
+                while True:
+                    discrim_feature_fake = outputs.get('discrim%s_feature%d_fake' % (infix, i_feature))
+                    discrim_feature_real = outputs.get('discrim%s_feature%d_real' % (infix, i_feature))
+                    if discrim_feature_fake is None or discrim_feature_real is None:
+                        break
+                    gen_losses["gen%s_feature%d_l2_loss" % (infix, i_feature)] = \
+                        (vp.losses.l2_loss(discrim_feature_fake, discrim_feature_real), hparams.feature_l2_weight)
+                    i_feature += 1
         vae_gan_weights = {'': hparams.vae_gan_weight,
                            '_tuple': hparams.tuple_vae_gan_weight,
                            '_image': hparams.image_vae_gan_weight,
@@ -420,6 +445,16 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             if vae_gan_weight:
                 gen_vae_gan_loss = vp.losses.gan_loss(outputs['discrim%s_logits_enc_fake' % infix], 1.0, hparams.gan_loss_type)
                 gen_losses["gen%s_vae_gan_loss" % infix] = (gen_vae_gan_loss, vae_gan_weight)
+            if hparams.feature_l2_weight:
+                i_feature = 0
+                while True:
+                    discrim_feature_enc_fake = outputs.get('discrim%s_feature%d_enc_fake' % (infix, i_feature))
+                    discrim_feature_enc_real = outputs.get('discrim%s_feature%d_enc_real' % (infix, i_feature))
+                    if discrim_feature_enc_fake is None or discrim_feature_enc_real is None:
+                        break
+                    gen_losses["gen%s_vae_feature%d_l2_loss" % (infix, i_feature)] = \
+                        (vp.losses.l2_loss(discrim_feature_enc_fake, discrim_feature_enc_real), hparams.feature_l2_weight)
+                    i_feature += 1
         if hparams.kl_weight:
             gen_kl_loss = vp.losses.kl_loss(outputs['enc_zs_mu'], outputs['enc_zs_log_sigma_sq'])
             gen_losses["gen_kl_loss"] = (gen_kl_loss, self.kl_weight)  # possibly annealed kl_weight
