@@ -580,7 +580,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             schedule_sampling='inverse_sigmoid',
             schedule_sampling_k=900.0,
             schedule_sampling_steps=(0, 100000),
-            e_net='legacy',
+            e_net='n_layer',
             nz=8,
             num_samples=8,
             nef=32,
