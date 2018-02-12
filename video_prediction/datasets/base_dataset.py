@@ -1,5 +1,6 @@
 import glob
 import os
+import random
 import re
 from collections import OrderedDict
 
@@ -41,7 +42,7 @@ class BaseVideoDataset:
             filenames = glob.glob(os.path.join(input_dir, '*.tfrecord*'))
             if filenames:
                 self.input_dir = input_dir
-                self.filenames = filenames
+                self.filenames = sorted(filenames)  # ensures order is the same across systems
                 break
         if not self.filenames:
             raise FileNotFoundError('No tfrecords were found in %s.' % self.input_dir)
@@ -108,11 +109,13 @@ class BaseVideoDataset:
 
     def make_batch(self, batch_size):
         filenames = self.filenames
-        dataset = tf.data.TFRecordDataset(filenames).repeat(self.num_epochs)
-        dataset = dataset.map(self.parser, num_parallel_calls=batch_size)
-        dataset.prefetch(2 * batch_size)
+        if self.mode == 'train':
+            # shuffle filenames to get even more shuffling
+            random.shuffle(filenames)
 
-        # Potentially shuffle records.
+        dataset = tf.data.TFRecordDataset(filenames)
+        dataset = dataset.map(self.parser)
+
         if self.mode == 'train':
             # min_queue_examples = int(
             #     self.num_examples_per_epoch() * 0.4)
@@ -121,13 +124,14 @@ class BaseVideoDataset:
             # dataset = dataset.shuffle(buffer_size=min_queue_examples + 3 * batch_size)
             dataset = dataset.shuffle(buffer_size=min(4096, self.num_examples_per_epoch()))
 
+        dataset = dataset.repeat(self.num_epochs)
         dataset = dataset.batch(batch_size)
         iterator = dataset.make_one_shot_iterator()
         state_like_batches, action_like_batches = iterator.get_next()
 
         input_batches = OrderedDict(list(state_like_batches.items()) + list(action_like_batches.items()))
         for input_batch in input_batches.values():
-            input_batch.set_shape([batch_size] + input_batch.shape.as_list()[1:])
+            input_batch.set_shape([batch_size] + [None] * (input_batch.shape.ndims - 1))
         target_batches = state_like_batches['images'][:, self.hparams.context_frames:]
         return input_batches, target_batches
 
