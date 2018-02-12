@@ -2,7 +2,7 @@ import tensorflow as tf
 from tensorflow.python.util import nest
 
 from video_prediction import ops
-from video_prediction.ops import conv2d, conv3d, lrelu, tile_concat
+from video_prediction.ops import conv2d, conv3d, lrelu, tile_concat, flatten
 from video_prediction.utils import tf_utils
 
 
@@ -112,7 +112,7 @@ def create_acvideo_discriminator(clips,
 
 
 def discriminator_fn(targets, inputs=None, hparams=None):
-    batch_size = targets.shape[0].value
+    batch_size = targets.shape[1].value
     # sort of hack to ensure that the same t_sample is used for all the
     # discriminators that are given the same inputs
     if 't_sample' in inputs:
@@ -120,27 +120,29 @@ def discriminator_fn(targets, inputs=None, hparams=None):
     else:
         t_sample = tf.random_uniform([batch_size], minval=0, maxval=targets.shape[0].value, dtype=tf.int32)
         inputs['t_sample'] = t_sample
-    images_sample = tf.gather_nd(targets, tf.stack([t_sample, tf.range(batch_size)], axis=1))
+    image_sample = tf.gather_nd(targets, tf.stack([t_sample, tf.range(batch_size)], axis=1))
     # assume that the clips have the same length as the targets
-    clips_sample = targets
+    clip_sample = targets
 
     outputs = {}
     if hparams.image_gan_weight or hparams.image_vae_gan_weight:
-        image_features = create_image_discriminator(images_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer)
+        image_features = create_image_discriminator(image_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer)
         image_features, image_logits = image_features[:-1], image_features[-1]
         outputs['discrim_image_logits'] = tf.expand_dims(image_logits, axis=0)  # expand dims for the time dimension
-        # TODO: these features are not matched between the fake and real ones
-        for i, image_feature in enumerate(image_features):
-            outputs['discrim_image_feature%d' % i] = tf.expand_dims(image_feature, axis=0)
+        with tf.variable_scope(tf.get_variable_scope(), reuse=True):
+            images_features = create_image_discriminator(flatten(targets, 0, 1), ndf=hparams.ndf, norm_layer=hparams.norm_layer)
+        for i, images_feature in enumerate(images_features):
+            images_feature = tf.reshape(images_feature, targets.shape[:2].as_list() + images_feature.shape[1:].as_list())
+            outputs['discrim_images_feature%d' % i] = images_feature
     if hparams.video_gan_weight or hparams.video_vae_gan_weight:
-        video_features = create_video_discriminator(clips_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer)
+        video_features = create_video_discriminator(clip_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer)
         video_features, video_logits = video_features[:-1], video_features[-1]
         outputs['discrim_video_logits'] = video_logits
         for i, video_feature in enumerate(video_features):
             outputs['discrim_video_feature%d' % i] = video_feature
     if hparams.acvideo_gan_weight or hparams.acvideo_vae_gan_weight:
         actions_sample = inputs['actions'][hparams.context_frames:]
-        acvideo_features = create_acvideo_discriminator(clips_sample, actions_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer)
+        acvideo_features = create_acvideo_discriminator(clip_sample, actions_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer)
         acvideo_features, acvideo_logits = acvideo_features[:-1], acvideo_features[-1]
         outputs['discrim_acvideo_logits'] = acvideo_logits
         for i, acvideo_feature in enumerate(acvideo_features):
