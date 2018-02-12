@@ -426,7 +426,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             if gan_weight:
                 gen_gan_loss = vp.losses.gan_loss(outputs['discrim%s_logits_fake' % infix], 1.0, hparams.gan_loss_type)
                 gen_losses["gen%s_gan_loss" % infix] = (gen_gan_loss, gan_weight)
-            if hparams.feature_l2_weight:
+            if gan_weight and hparams.feature_l2_weight:
                 i_feature = 0
                 while True:
                     discrim_feature_fake = outputs.get('discrim%s_feature%d_fake' % (infix, i_feature))
@@ -445,7 +445,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             if vae_gan_weight:
                 gen_vae_gan_loss = vp.losses.gan_loss(outputs['discrim%s_logits_enc_fake' % infix], 1.0, hparams.gan_loss_type)
                 gen_losses["gen%s_vae_gan_loss" % infix] = (gen_vae_gan_loss, vae_gan_weight)
-            if hparams.feature_l2_weight:
+            if vae_gan_weight and hparams.feature_l2_weight:
                 i_feature = 0
                 while True:
                     discrim_feature_enc_fake = outputs.get('discrim%s_feature%d_enc_fake' % (infix, i_feature))
