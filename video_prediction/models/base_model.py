@@ -391,10 +391,14 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
         else:
             self.train_op = None
 
-        add_summaries({name: tensor for name, tensor in self.inputs.items() if tensor.shape.ndims >= 4})
+        add_summaries({name: tensor for name, tensor in self.inputs.items()
+                       if tensor.shape.ndims == 4 or (tensor.shape.ndims > 4 and
+                                                      tensor.shape[4].value in (1, 3))})
         if self.targets is not None:
             add_summaries({'targets': self.targets})
-        add_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims >= 4})
+        add_summaries({name: tensor for name, tensor in self.outputs.items()
+                       if tensor.shape.ndims == 4 or (tensor.shape.ndims > 4 and
+                                                      tensor.shape[4].value in (1, 3))})
         add_scalar_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims == 0})
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
@@ -598,10 +602,14 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
             self.d_loss = reduce_tensors(tower_d_loss)
             self.g_loss = reduce_tensors(tower_g_loss)
 
-        add_summaries({name: tensor for name, tensor in self.inputs.items() if tensor.shape.ndims >= 4})
+        add_summaries({name: tensor for name, tensor in self.inputs.items()
+                       if tensor.shape.ndims == 4 or (tensor.shape.ndims > 4 and
+                                                      tensor.shape[4].value in (1, 3))})
         if self.targets is not None:
             add_summaries({'targets': self.targets})
-        add_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims >= 4})
+        add_summaries({name: tensor for name, tensor in self.outputs.items()
+                       if tensor.shape.ndims == 4 or (tensor.shape.ndims > 4 and
+                                                      tensor.shape[4].value in (1, 3))})
         add_scalar_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims == 0})
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)

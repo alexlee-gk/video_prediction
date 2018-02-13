@@ -131,6 +131,7 @@ def discriminator_fn(targets, inputs=None, hparams=None):
         outputs['discrim_image_logits'] = tf.expand_dims(image_logits, axis=0)  # expand dims for the time dimension
         with tf.variable_scope(tf.get_variable_scope(), reuse=True):
             images_features = create_image_discriminator(flatten(targets, 0, 1), ndf=hparams.ndf, norm_layer=hparams.norm_layer)
+        images_features = images_features[:-1]
         for i, images_feature in enumerate(images_features):
             images_feature = tf.reshape(images_feature, targets.shape[:2].as_list() + images_feature.shape[1:].as_list())
             outputs['discrim_images_feature%d' % i] = images_feature
