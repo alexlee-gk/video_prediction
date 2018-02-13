@@ -134,7 +134,7 @@ def discriminator_fn(targets, inputs=None, hparams=None):
         images_features = images_features[:-1]
         for i, images_feature in enumerate(images_features):
             images_feature = tf.reshape(images_feature, targets.shape[:2].as_list() + images_feature.shape[1:].as_list())
-            outputs['discrim_images_feature%d' % i] = images_feature
+            outputs['discrim_image_feature%d' % i] = images_feature
     if hparams.video_gan_weight or hparams.video_vae_gan_weight:
         video_features = create_video_discriminator(clip_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer)
         video_features, video_logits = video_features[:-1], video_features[-1]
