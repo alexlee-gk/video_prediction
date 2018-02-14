@@ -114,7 +114,8 @@ class BaseVideoDataset:
             random.shuffle(filenames)
 
         dataset = tf.data.TFRecordDataset(filenames)
-        dataset = dataset.map(self.parser)
+        dataset = dataset.map(self.parser, num_parallel_calls=batch_size)
+        dataset.prefetch(2 * batch_size)
 
         if self.mode == 'train':
             # min_queue_examples = int(
