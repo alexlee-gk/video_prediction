@@ -531,6 +531,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             new_states['rnn_z_state'] = rnn_z_state
         if 'pix_distribs' in inputs:
             new_states['gen_pix_distrib'] = gen_pix_distrib
+            new_states['last_pix_distribs'] = last_pix_distribs
         if 'states' in inputs:
             new_states['gen_state'] = gen_state
         return outputs, new_states
