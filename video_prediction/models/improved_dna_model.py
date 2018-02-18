@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python.util import nest
 
-from video_prediction import ops
+from video_prediction import ops, flow_ops
 from video_prediction.models import VideoPredictionModel
 from video_prediction.models import pix2pix_model, mocogan_model
 from video_prediction.ops import lrelu, dense, pad2d, conv2d, upsample_conv2d, conv_pool2d, flatten, tile_concat, pool2d
@@ -174,7 +174,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         gen_input_shape = list(image_shape)
         if 'actions' in inputs:
             gen_input_shape[-1] += inputs['actions'].shape[-1].value
-        num_masks = self.hparams.num_transformed_images + \
+        num_masks = self.hparams.last_frames * self.hparams.num_transformed_images + \
             int(bool(self.hparams.prev_image_background)) + \
             int(bool(self.hparams.first_image_background and not self.hparams.context_images_background)) + \
             (self.hparams.context_frames if self.hparams.context_images_background else 0) + \
@@ -191,6 +191,8 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             output_size['transformed_pix_distribs'] = tf.TensorShape([height, width, num_motions, num_masks])
         if 'states' in inputs:
             output_size['gen_states'] = inputs['states'].shape[2:]
+        if self.hparams.transformation == 'flow':
+            output_size['gen_flows'] = tf.TensorShape([height, width, 2, self.hparams.last_frames * self.hparams.num_transformed_images])
         self._output_size = output_size
 
         # state_size
@@ -211,6 +213,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                                     for conv_rnn_state_size in conv_rnn_state_sizes]
         state_size = {'time': tf.TensorShape([]),
                       'gen_image': tf.TensorShape(image_shape),
+                      'last_images': [tf.TensorShape(image_shape)] * self.hparams.last_frames,
                       'conv_rnn_states': conv_rnn_state_sizes}
         if 'zs' in inputs and self.hparams.use_rnn_z:
             rnn_z_state_size = tf.TensorShape([self.hparams.nz])
@@ -219,6 +222,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             state_size['rnn_z_state'] = rnn_z_state_size
         if 'pix_distribs' in inputs:
             state_size['gen_pix_distrib'] = tf.TensorShape([height, width, num_motions])
+            state_size['last_pix_distribs'] = [tf.TensorShape([height, width, num_motions])] * self.hparams.last_frames
         if 'states' in inputs:
             state_size['gen_state'] = inputs['states'].shape[2:]
         self._state_size = state_size
@@ -257,6 +261,13 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
     @property
     def state_size(self):
         return self._state_size
+
+    def zero_state(self, batch_size, dtype):
+        init_state = super(DNACell, self).zero_state(batch_size, dtype)
+        init_state['last_images'] = [self.inputs['images'][0]] * self.hparams.last_frames
+        if 'pix_distribs' in self.inputs:
+            init_state['last_pix_distribs'] = [self.inputs['pix_distribs'][0]] * self.hparams.last_frames
+        return init_state
 
     def _rnn_func(self, inputs, state, num_units):
         if self.hparams.rnn == 'lstm':
@@ -298,8 +309,10 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             t = tf.to_int32(tf.identity(time[0]))
 
         image = tf.where(self.ground_truth[t], inputs['images'], states['gen_image'])  # schedule sampling (if any)
+        last_images = states['last_images'][1:] + [image]
         if 'pix_distribs' in inputs:
             pix_distrib = tf.where(self.ground_truth[t], inputs['pix_distribs'], states['gen_pix_distrib'])
+            last_pix_distribs = states['last_pix_distribs'][1:] + [pix_distrib]
         if 'states' in inputs:
             state = tf.where(self.ground_truth[t], inputs['states'], states['gen_state'])
 
@@ -377,32 +390,43 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             layers.append((h, conv_rnn_h) if use_conv_rnn else (h,))
         assert len(new_conv_rnn_states) == len(conv_rnn_states)
 
-        if self.hparams.num_transformed_images:
-            assert len(self.hparams.kernel_size) == 2
-            kernel_shape = list(self.hparams.kernel_size) + [self.hparams.num_transformed_images]
-            if self.hparams.transformation == 'dna':
-                with tf.variable_scope('h%d_dna_kernel' % len(layers)):
-                    h_dna_kernel = conv2d(layers[-1][-1], self.hparams.ngf, kernel_size=(3, 3), strides=(1, 1))
-                    h_dna_kernel = norm_layer(h_dna_kernel)
-                    h_dna_kernel = tf.nn.relu(h_dna_kernel)
+        if self.hparams.last_frames and self.hparams.num_transformed_images:
+            if self.hparams.transformation == 'flow':
+                with tf.variable_scope('h%d_flow' % len(layers)):
+                    h_flow = conv2d(layers[-1][-1], self.hparams.ngf, kernel_size=(3, 3), strides=(1, 1))
+                    h_flow = norm_layer(h_flow)
+                    h_flow = tf.nn.relu(h_flow)
 
-                # Using largest hidden state for predicting untied conv kernels.
-                with tf.variable_scope('dna_kernels'):
-                    kernels = conv2d(h_dna_kernel, np.prod(kernel_shape), kernel_size=(3, 3), strides=(1, 1))
-                    kernels = tf.reshape(kernels, [batch_size, height, width] + kernel_shape)
-                kernel_spatial_axes = [3, 4]
-            elif self.hparams.transformation == 'cdna':
-                with tf.variable_scope('cdna_kernels'):
-                    smallest_layer = layers[num_encoder_layers - 1][-1]
-                    kernels = dense(flatten(smallest_layer), np.prod(kernel_shape))
-                    kernels = tf.reshape(kernels, [batch_size] + kernel_shape)
-                kernel_spatial_axes = [1, 2]
+                with tf.variable_scope('flows'):
+                    flows = conv2d(h_flow, 2 * self.hparams.last_frames * self.hparams.num_transformed_images, kernel_size=(3, 3), strides=(1, 1))
+                    flows = tf.reshape(flows, [batch_size, height, width, 2, self.hparams.last_frames * self.hparams.num_transformed_images])
             else:
-                raise ValueError('Invalid transformation %s' % self.hparams.transformation)
+                assert len(self.hparams.kernel_size) == 2
+                kernel_shape = list(self.hparams.kernel_size) + [self.hparams.last_frames * self.hparams.num_transformed_images]
+                if self.hparams.transformation == 'dna':
+                    with tf.variable_scope('h%d_dna_kernel' % len(layers)):
+                        h_dna_kernel = conv2d(layers[-1][-1], self.hparams.ngf, kernel_size=(3, 3), strides=(1, 1))
+                        h_dna_kernel = norm_layer(h_dna_kernel)
+                        h_dna_kernel = tf.nn.relu(h_dna_kernel)
 
-            with tf.name_scope('kernel_normalization'):
-                kernels = tf.nn.relu(kernels - RELU_SHIFT) + RELU_SHIFT
-                kernels /= tf.reduce_sum(kernels, axis=kernel_spatial_axes, keep_dims=True)
+                    # Using largest hidden state for predicting untied conv kernels.
+                    with tf.variable_scope('dna_kernels'):
+                        kernels = conv2d(h_dna_kernel, np.prod(kernel_shape), kernel_size=(3, 3), strides=(1, 1))
+                        kernels = tf.reshape(kernels, [batch_size, height, width] + kernel_shape)
+                    kernel_spatial_axes = [3, 4]
+                elif self.hparams.transformation == 'cdna':
+                    with tf.variable_scope('cdna_kernels'):
+                        smallest_layer = layers[num_encoder_layers - 1][-1]
+                        kernels = dense(flatten(smallest_layer), np.prod(kernel_shape))
+                        kernels = tf.reshape(kernels, [batch_size] + kernel_shape)
+                    kernel_spatial_axes = [1, 2]
+                else:
+                    raise ValueError('Invalid transformation %s' % self.hparams.transformation)
+
+            if self.hparams.transformation != 'flow':
+                with tf.name_scope('kernel_normalization'):
+                    kernels = tf.nn.relu(kernels - RELU_SHIFT) + RELU_SHIFT
+                    kernels /= tf.reduce_sum(kernels, axis=kernel_spatial_axes, keep_dims=True)
 
         if self.hparams.generate_scratch_image:
             with tf.variable_scope('h%d_scratch' % len(layers)):
@@ -419,8 +443,11 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
 
         with tf.name_scope('transformed_images'):
             transformed_images = []
-            if self.hparams.num_transformed_images:
-                transformed_images.extend(apply_kernels(image, kernels, self.hparams.dilation_rate))
+            if self.hparams.last_frames and self.hparams.num_transformed_images:
+                if self.hparams.transformation == 'flow':
+                    transformed_images.extend(apply_flows(last_images, flows))
+                else:
+                    transformed_images.extend(apply_kernels(last_images, kernels, self.hparams.dilation_rate))
             if self.hparams.prev_image_background:
                 transformed_images.append(image)
             if self.hparams.first_image_background and not self.hparams.context_images_background:
@@ -433,8 +460,11 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         if 'pix_distribs' in inputs:
             with tf.name_scope('transformed_pix_distribs'):
                 transformed_pix_distribs = []
-                if self.hparams.num_transformed_images:
-                    transformed_pix_distribs.extend(apply_kernels(pix_distrib, kernels, self.hparams.dilation_rate))
+                if self.hparams.last_frames and self.hparams.num_transformed_images:
+                    if self.hparams.transformation == 'flow':
+                        transformed_pix_distribs.extend(apply_flows(last_pix_distribs, flows))
+                    else:
+                        transformed_pix_distribs.extend(apply_kernels(last_pix_distribs, kernels, self.hparams.dilation_rate))
                 if self.hparams.prev_image_background:
                     transformed_pix_distribs.append(pix_distrib)
                 if self.hparams.first_image_background and not self.hparams.context_images_background:
@@ -461,7 +491,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                 masks = [tf.ones([batch_size, height, width, 1])]
             else:
                 raise ValueError("Either one of the following should be true: "
-                                 "num_transformed_images, first_image_background, "
+                                 "last_frames and num_transformed_images, first_image_background, "
                                  "prev_image_background, generate_scratch_image")
 
         with tf.name_scope('gen_images'):
@@ -490,9 +520,12 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             outputs['transformed_pix_distribs'] = tf.stack(transformed_pix_distribs, axis=-1)
         if 'states' in inputs:
             outputs['gen_states'] = gen_state
+        if self.hparams.transformation == 'flow':
+            outputs['gen_flows'] = flows
 
         new_states = {'time': time + 1,
                       'gen_image': gen_image,
+                      'last_images': last_images,
                       'conv_rnn_states': new_conv_rnn_states}
         if 'zs' in inputs and self.hparams.use_rnn_z:
             new_states['rnn_z_state'] = rnn_z_state
@@ -572,6 +605,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             rnn='lstm',
             conv_rnn='lstm',
             num_transformed_images=4,
+            last_frames=1,
             prev_image_background=True,
             first_image_background=True,
             context_images_background=False,
@@ -684,10 +718,30 @@ def apply_kernels(image, kernels, dilation_rate=(1, 1)):
         A list of `num_transformed_images` 4-D tensors, each of shape
             `[batch, in_height, in_width, in_channels]`.
     """
-    if len(kernels.get_shape()) == 4:
-        outputs = apply_cdna_kernels(image, kernels, dilation_rate=dilation_rate)
-    elif len(kernels.get_shape()) == 6:
-        outputs = apply_dna_kernels(image, kernels, dilation_rate=dilation_rate)
+    if isinstance(image, list):
+        image_list = image
+        kernels_list = tf.split(kernels, len(image_list), axis=-1)
+        outputs = []
+        for image, kernels in zip(image_list, kernels_list):
+            outputs.extend(apply_kernels(image, kernels))
     else:
-        raise ValueError
+        if len(kernels.get_shape()) == 4:
+            outputs = apply_cdna_kernels(image, kernels, dilation_rate=dilation_rate)
+        elif len(kernels.get_shape()) == 6:
+            outputs = apply_dna_kernels(image, kernels, dilation_rate=dilation_rate)
+        else:
+            raise ValueError
+    return outputs
+
+
+def apply_flows(image, flows):
+    if isinstance(image, list):
+        image_list = image
+        flows_list = tf.split(flows, len(image_list), axis=-1)
+        outputs = []
+        for image, flows in zip(image_list, flows_list):
+            outputs.extend(apply_flows(image, flows))
+    else:
+        flows = tf.unstack(flows, axis=-1)
+        outputs = [flow_ops.image_warp(image, flow) for flow in flows]
     return outputs

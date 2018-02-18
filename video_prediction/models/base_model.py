@@ -7,6 +7,7 @@ from tensorflow.contrib.training import HParams
 from tensorflow.python.util import nest
 
 import video_prediction as vp
+from video_prediction.ops import flatten
 from video_prediction.utils import tf_utils
 from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
     replace_read_ops, print_loss_info, transpose_batch_time, add_scalar_summaries, add_summaries
@@ -207,6 +208,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             l1_weight=0.0,
             l2_weight=1.0,
             state_weight=1e-4,
+            tv_weight=0.0,
             gan_weight=0.0,
             vae_gan_weight=0.0,
             tuple_gan_weight=0.0,
@@ -421,6 +423,11 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             target_states = inputs['states'][hparams.context_frames:]
             gen_state_loss = vp.losses.l2_loss(gen_states, target_states)
             gen_losses["gen_state_loss"] = (gen_state_loss, hparams.state_weight)
+        if hparams.tv_weight:
+            gen_flows = outputs.get('gen_flows_enc', outputs['gen_flows'])
+            gen_flows_reshaped = flatten(flatten(gen_flows, 0, 1), -2)
+            gen_tv_loss = tf.reduce_mean(tf.image.total_variation(gen_flows_reshaped))
+            gen_losses['gen_tv_loss'] = (gen_tv_loss, hparams.tv_weight)
         gan_weights = {'': hparams.gan_weight,
                        '_tuple': hparams.tuple_gan_weight,
                        '_image': hparams.image_gan_weight,
