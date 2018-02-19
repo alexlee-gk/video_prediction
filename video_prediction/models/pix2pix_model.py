@@ -291,10 +291,18 @@ def discriminator_fn(targets, inputs=None, hparams=None):
         targets_and_inputs = (targets,)
     else:
         if hparams.d_conditional:
-            # exactly one of them should be true
-            assert bool('gen_inputs' in inputs) != bool('gen_inputs_enc' in inputs)
-            gen_inputs = inputs['gen_inputs'] if 'gen_inputs' in inputs else inputs['gen_inputs_enc']
-            gen_inputs = tf.stop_gradient(gen_inputs)
+            if hparams.d_use_gt_inputs:
+                image_inputs = inputs['images'][hparams.context_frames - 1:][:targets.shape[0].value]
+                if 'actions' in inputs:
+                    action_inputs = inputs['actions'][hparams.context_frames - 1:][:targets.shape[0].value]
+                    gen_inputs = ops.tile_concat([image_inputs, action_inputs[:, :, None, None, :]], axis=-1)
+                else:
+                    gen_inputs = image_inputs
+            else:
+                # exactly one of them should be true
+                assert bool('gen_inputs' in inputs) != bool('gen_inputs_enc' in inputs)
+                gen_inputs = inputs['gen_inputs'] if 'gen_inputs' in inputs else inputs['gen_inputs_enc']
+                gen_inputs = tf.stop_gradient(gen_inputs)
         else:
             gen_inputs = None
         targets_and_inputs = (targets, gen_inputs)
@@ -426,5 +434,6 @@ class Pix2PixVideoPredictionModel(VideoPredictionModel):
             schedule_sampling_k=900.0,
             schedule_sampling_steps=(0, 100000),
             d_conditional=True,
+            d_use_gt_inputs=True,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))

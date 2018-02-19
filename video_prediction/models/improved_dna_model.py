@@ -599,6 +599,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             norm_layer='instance',
             d_downsample_layer='conv_pool2d',
             d_conditional=True,
+            d_use_gt_inputs=True,
             ngf=32,
             transformation='cdna',
             kernel_size=(5, 5),
