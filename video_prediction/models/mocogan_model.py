@@ -121,8 +121,21 @@ def discriminator_fn(targets, inputs=None, hparams=None):
         t_sample = tf.random_uniform([batch_size], minval=0, maxval=targets.shape[0].value, dtype=tf.int32)
         inputs['t_sample'] = t_sample
     image_sample = tf.gather_nd(targets, tf.stack([t_sample, tf.range(batch_size)], axis=1))
-    # assume that the clips have the same length as the targets
-    clip_sample = targets
+
+    if 't_start' in inputs:
+        t_start = inputs['t_start']
+    else:
+        t_start = tf.random_uniform([batch_size], minval=0, maxval=targets.shape[0].value - hparams.clip_length + 1, dtype=tf.int32)
+        inputs['t_start'] = t_start
+    t_start_indices = tf.stack([t_start, tf.range(batch_size)], axis=1)
+    t_offset_indices = tf.stack([tf.range(hparams.clip_length), tf.zeros(hparams.clip_length, dtype=tf.int32)], axis=1)
+    indices = tf.expand_dims(t_start_indices, axis=0) + tf.expand_dims(t_offset_indices, axis=1)
+    clip_sample = tf.reshape(tf.gather_nd(targets, flatten(indices, 0, 1)), [hparams.clip_length] + targets.shape.as_list()[1:])
+
+    t_offset_indices = tf.stack([tf.range(hparams.clip_length - 1), tf.zeros(hparams.clip_length - 1, dtype=tf.int32)], axis=1)
+    indices = tf.expand_dims(t_start_indices, axis=0) + tf.expand_dims(t_offset_indices, axis=1)
+    actions = inputs['actions'][hparams.context_frames:]
+    actions_sample = tf.reshape(tf.gather_nd(actions, flatten(indices, 0, 1)), [hparams.clip_length - 1] + actions.shape.as_list()[1:])
 
     outputs = {}
     if hparams.image_gan_weight or hparams.image_vae_gan_weight:
@@ -142,7 +155,6 @@ def discriminator_fn(targets, inputs=None, hparams=None):
         for i, video_feature in enumerate(video_features):
             outputs['discrim_video_feature%d' % i] = video_feature
     if hparams.acvideo_gan_weight or hparams.acvideo_vae_gan_weight:
-        actions_sample = inputs['actions'][hparams.context_frames:]
         acvideo_features = create_acvideo_discriminator(clip_sample, actions_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer)
         acvideo_features, acvideo_logits = acvideo_features[:-1], acvideo_features[-1]
         outputs['discrim_acvideo_logits'] = acvideo_logits

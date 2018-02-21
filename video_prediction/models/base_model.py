@@ -205,6 +205,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             batch_size=16,
             context_frames=0,
             sequence_length=0,
+            clip_length=10,
             l1_weight=0.0,
             l2_weight=1.0,
             state_weight=1e-4,
