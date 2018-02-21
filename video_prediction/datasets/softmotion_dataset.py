@@ -26,7 +26,7 @@ class SoftmotionVideoDataset(VideoDataset):
         default_hparams = super(SoftmotionVideoDataset, self).get_default_hparams_dict()
         hparams = dict(
             context_frames=2,
-            sequence_length=15,
+            sequence_length=12,
             time_shift=2,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
