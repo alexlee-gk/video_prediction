@@ -1,6 +1,8 @@
 import numpy as np
 import tensorflow as tf
 
+from video_prediction.ops import flatten
+
 
 def peak_signal_to_noise_ratio_np(true, pred, axis=None):
     return 10.0 * np.log(1.0 / mean_squared_error_np(true, pred, axis=axis)) / np.log(10.0)
@@ -29,7 +31,7 @@ def structural_similarity_np(true, pred, k1=0.01, k2=0.03, kernel_size=7, data_r
 
 
 def expected_pixel_distribution_np(pix_distrib):
-    pix_distrib = pix_distrib / np.sum(pix_distrib, axis=(-3, -2), keepdims=True)
+    pix_distrib = pix_distrib / np.sum(pix_distrib, axis=(-3, -2), keep_dims=True)
     height, width = pix_distrib.shape[-3:-1]
     xv, yv = np.meshgrid(np.arange(width), np.arange(height))
     return np.stack([np.sum(yv[:, :, None] * pix_distrib, axis=(-3, -2, -1)),
@@ -131,6 +133,65 @@ def structural_similarity(true, pred, k1=0.01, k2=0.03, kernel_size=7, data_rang
                          (true, pred), dtype=tf.float32, back_prop=False)
         ssim = tf.reduce_mean(ssim)
     return ssim
+
+
+def normalize_tensor(tensor, eps=1e-10):
+    norm_factor = tf.norm(tensor, axis=-1, keep_dims=True)
+    return tensor / (norm_factor + eps)
+
+
+def cosine_similarity(tensor0, tensor1):
+    tensor0 = normalize_tensor(tensor0)
+    tensor1 = normalize_tensor(tensor1)
+    return tf.reduce_mean(tf.reduce_sum(tensor0 * tensor1, axis=-1))
+
+
+def cosine_distance(tensor0, tensor1):
+    """
+    Equivalent to:
+        tensor0 = normalize_tensor(tensor0)
+        tensor1 = normalize_tensor(tensor1)
+        return tf.reduce_mean(tf.reduce_sum(tf.square(tensor0 - tensor1), axis=-1)) / 2.0
+    """
+    return 1.0 - cosine_similarity(tensor0, tensor1)
+
+
+def vgg_cosine_distance(image0, image1, model):
+    if image0.shape.ndims == 5:
+        image0 = flatten(image0, 0, 1)
+    if image1.shape.ndims == 5:
+        image1 = flatten(image1, 0, 1)
+    image0 = image0 * 255.0
+    image1 = image1 * 255.0
+    image0 = tf.keras.applications.vgg16.preprocess_input(image0)
+    image1 = tf.keras.applications.vgg16.preprocess_input(image1)
+    features0 = model(image0)
+    features1 = model(image1)
+    cdist = 0.0
+    for feature0, feature1 in zip(features0, features1):
+        cdist += cosine_distance(feature0, feature1)
+    return cdist
+
+
+def normalize_tensor_np(tensor, eps=1e-10):
+    norm_factor = np.linalg.norm(tensor, axis=-1, keep_dims=True)
+    return tensor / (norm_factor + eps)
+
+
+def cosine_similarity_np(tensor0, tensor1):
+    tensor0 = normalize_tensor_np(tensor0)
+    tensor1 = normalize_tensor_np(tensor1)
+    return np.mean(np.sum(tensor0 * tensor1, axis=-1))
+
+
+def cosine_distance_np(tensor0, tensor1):
+    """
+    Equivalent to:
+        tensor0 = normalize_tensor_np(tensor0)
+        tensor1 = normalize_tensor_np(tensor1)
+        return np.mean(np.sum(np.square(tensor0 - tensor1), axis=-1)) / 2.0
+    """
+    return 1.0 - cosine_similarity_np(tensor0, tensor1)
 
 
 def main():

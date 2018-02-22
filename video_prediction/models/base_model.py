@@ -44,6 +44,16 @@ class BaseVideoPredictionModel:
         self.outputs = None
         self.metrics = None
 
+        vgg_model = tf.keras.applications.vgg16.VGG16(include_top=False, weights=None)
+        outputs = [
+            vgg_model.get_layer('block1_conv2').output,
+            vgg_model.get_layer('block2_conv2').output,
+            vgg_model.get_layer('block3_conv3').output,
+            vgg_model.get_layer('block4_conv3').output,
+            vgg_model.get_layer('block5_conv3').output,
+        ]
+        self.vgg_model = tf.keras.models.Model(inputs=vgg_model.input, outputs=outputs)
+
     def get_default_hparams_dict(self):
         """
         The keys of this dict define valid hyperparameters for instances of
@@ -90,7 +100,32 @@ class BaseVideoPredictionModel:
         metrics['psnr'] = vp.metrics.peak_signal_to_noise_ratio(target_images, gen_images)
         metrics['mse'] = vp.metrics.mean_squared_error(target_images, gen_images)
         metrics['ssim'] = vp.metrics.structural_similarity(target_images, gen_images)
+        metrics['vgg_cdist'] = vp.metrics.vgg_cosine_distance(target_images, gen_images, self.vgg_model)
         return metrics
+
+    def restore(self, sess, checkpoints):
+        if self.vgg_model is not None:
+            tf.keras.backend.set_session(sess)
+            WEIGHTS_PATH_NO_TOP = 'https://github.com/fchollet/deep-learning-models/releases/download/v0.1/vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5'
+            weights_path = tf.keras.utils.get_file(
+                'vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5',
+                WEIGHTS_PATH_NO_TOP,
+                cache_subdir='models',
+                file_hash='6d6bbae143d832006294945121d1f1fc')
+            self.vgg_model.load_weights(weights_path)
+
+        if checkpoints:
+            if not isinstance(checkpoints, (list, tuple)):
+                checkpoints = [checkpoints]
+            # automatically skip global_step if more than one checkpoint is provided
+            skip_global_step = len(checkpoints) > 1
+            savers = []
+            for checkpoint in checkpoints:
+                print("creating restore saver from checkpoint %s" % checkpoint)
+                saver, _ = tf_utils.get_checkpoint_restore_saver(checkpoint, skip_global_step=skip_global_step)
+                savers.append(saver)
+            restore_op = [saver.saver_def.restore_op_name for saver in savers]
+            sess.run(restore_op)
 
 
 class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
@@ -208,6 +243,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             clip_length=10,
             l1_weight=0.0,
             l2_weight=1.0,
+            vgg_cdist_weight=0.0,
             state_weight=1e-4,
             tv_weight=0.0,
             gan_weight=0.0,
@@ -410,7 +446,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
     def generator_loss_fn(self, inputs, outputs, targets):
         hparams = self.hparams
         gen_losses = OrderedDict()
-        if hparams.l1_weight or hparams.l2_weight:
+        if hparams.l1_weight or hparams.l2_weight or hparams.vgg_cdist_weight:
             gen_images = outputs.get('gen_images_enc', outputs['gen_images'])
             target_images = targets
         if hparams.l1_weight:
@@ -419,6 +455,9 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
         if hparams.l2_weight:
             gen_l2_loss = vp.losses.l2_loss(gen_images, target_images)
             gen_losses["gen_l2_loss"] = (gen_l2_loss, hparams.l2_weight)
+        if hparams.vgg_cdist_weight:
+            gen_vgg_cdist_loss = vp.metrics.vgg_cosine_distance(gen_images, target_images, self.vgg_model)
+            gen_losses['gen_vgg_cdist_loss'] = (gen_vgg_cdist_loss, hparams.vgg_cdist_weight)
         if hparams.state_weight:
             gen_states = outputs.get('gen_states_enc', outputs['gen_states'])
             target_states = inputs['states'][hparams.context_frames:]
