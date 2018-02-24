@@ -7,6 +7,7 @@ from .improved_dna_model import ImprovedDNAVideoPredictionModel
 from .flow_model import FlowVideoPredictionModel
 from .dna_model import DNAVideoPredictionModel
 from .sna_model import SNAVideoPredictionModel
+from .pspnet50_model import PSPNet50VideoPredictionModel
 
 
 def get_model_class(model):
@@ -18,6 +19,7 @@ def get_model_class(model):
         'flow': 'FlowVideoPredictionModel',
         'dna': 'DNAVideoPredictionModel',
         'sna': 'SNAVideoPredictionModel',
+        'pspnet50': 'PSPNet50VideoPredictionModel',
     }
     model_class = model_mappings.get(model, model)
     model_class = globals().get(model_class)

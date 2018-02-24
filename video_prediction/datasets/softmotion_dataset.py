@@ -14,7 +14,7 @@ class SoftmotionVideoDataset(VideoDataset):
     """
     def __init__(self, *args, **kwargs):
         super(SoftmotionVideoDataset, self).__init__(*args, **kwargs)
-        self.state_like_names_and_shapes['images'] = '%d/image_view0/encoded', (64, 64, 3)
+        self.state_like_names_and_shapes['images'] = '%d/image_view0/encoded', None
         if self.hparams.use_state:
             self.state_like_names_and_shapes['states'] = '%d/endeffector_pos', (3,)
             self.action_like_names_and_shapes['actions'] = '%d/action', (4,)

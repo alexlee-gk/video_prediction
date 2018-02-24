@@ -244,6 +244,8 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             l1_weight=0.0,
             l2_weight=1.0,
             vgg_cdist_weight=0.0,
+            feature_l2_weight=0.0,
+            ae_l2_weight=0.0,
             state_weight=1e-4,
             tv_weight=0.0,
             gan_weight=0.0,
@@ -256,7 +258,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             video_vae_gan_weight=0.0,
             acvideo_gan_weight=0.0,
             acvideo_vae_gan_weight=0.0,
-            feature_l2_weight=0.0,
+            gan_feature_weight=0.0,
             gan_loss_type='LSGAN',
             kl_weight=0.0,
             kl_anneal='linear',
@@ -458,6 +460,16 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
         if hparams.vgg_cdist_weight:
             gen_vgg_cdist_loss = vp.metrics.vgg_cosine_distance(gen_images, target_images, self.vgg_model)
             gen_losses['gen_vgg_cdist_loss'] = (gen_vgg_cdist_loss, hparams.vgg_cdist_weight)
+        if hparams.feature_l2_weight:
+            gen_features = outputs.get('gen_features_enc', outputs['gen_features'])
+            target_features = outputs['features'][hparams.context_frames:]
+            gen_feature_l2_loss = vp.losses.l2_loss(gen_features, target_features)
+            gen_losses["gen_feature_l2_loss"] = (gen_feature_l2_loss, hparams.feature_l2_weight)
+        if hparams.ae_l2_weight:
+            gen_images_dec = outputs.get('gen_images_dec_enc', outputs['gen_images_dec'])  # they both should be the same
+            target_images = inputs['images']
+            gen_ae_l2_loss = vp.losses.l2_loss(gen_images_dec, target_images)
+            gen_losses["gen_ae_l2_loss"] = (gen_ae_l2_loss, hparams.ae_l2_weight)
         if hparams.state_weight:
             gen_states = outputs.get('gen_states_enc', outputs['gen_states'])
             target_states = inputs['states'][hparams.context_frames:]
@@ -477,7 +489,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             if gan_weight:
                 gen_gan_loss = vp.losses.gan_loss(outputs['discrim%s_logits_fake' % infix], 1.0, hparams.gan_loss_type)
                 gen_losses["gen%s_gan_loss" % infix] = (gen_gan_loss, gan_weight)
-            if gan_weight and hparams.feature_l2_weight:
+            if gan_weight and hparams.gan_feature_weight:
                 i_feature = 0
                 while True:
                     discrim_feature_fake = outputs.get('discrim%s_feature%d_fake' % (infix, i_feature))
@@ -485,7 +497,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
                     if discrim_feature_fake is None or discrim_feature_real is None:
                         break
                     gen_losses["gen%s_feature%d_l2_loss" % (infix, i_feature)] = \
-                        (vp.losses.l2_loss(discrim_feature_fake, discrim_feature_real), hparams.feature_l2_weight)
+                        (vp.losses.l2_loss(discrim_feature_fake, discrim_feature_real), hparams.gan_feature_weight)
                     i_feature += 1
         vae_gan_weights = {'': hparams.vae_gan_weight,
                            '_tuple': hparams.tuple_vae_gan_weight,
@@ -496,7 +508,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             if vae_gan_weight:
                 gen_vae_gan_loss = vp.losses.gan_loss(outputs['discrim%s_logits_enc_fake' % infix], 1.0, hparams.gan_loss_type)
                 gen_losses["gen%s_vae_gan_loss" % infix] = (gen_vae_gan_loss, vae_gan_weight)
-            if vae_gan_weight and hparams.feature_l2_weight:
+            if vae_gan_weight and hparams.gan_feature_weight:
                 i_feature = 0
                 while True:
                     discrim_feature_enc_fake = outputs.get('discrim%s_feature%d_enc_fake' % (infix, i_feature))
@@ -504,7 +516,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
                     if discrim_feature_enc_fake is None or discrim_feature_enc_real is None:
                         break
                     gen_losses["gen%s_vae_feature%d_l2_loss" % (infix, i_feature)] = \
-                        (vp.losses.l2_loss(discrim_feature_enc_fake, discrim_feature_enc_real), hparams.feature_l2_weight)
+                        (vp.losses.l2_loss(discrim_feature_enc_fake, discrim_feature_enc_real), hparams.gan_feature_weight)
                     i_feature += 1
         if hparams.kl_weight:
             gen_kl_loss = vp.losses.kl_loss(outputs['enc_zs_mu'], outputs['enc_zs_log_sigma_sq'])
