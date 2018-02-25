@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
 
+from video_prediction.models import vgg_network
 from video_prediction.ops import flatten
 
 
@@ -156,17 +157,15 @@ def cosine_distance(tensor0, tensor1):
     return 1.0 - cosine_similarity(tensor0, tensor1)
 
 
-def vgg_cosine_distance(image0, image1, model):
+def vgg_cosine_distance(image0, image1):
     if image0.shape.ndims == 5:
         image0 = flatten(image0, 0, 1)
     if image1.shape.ndims == 5:
         image1 = flatten(image1, 0, 1)
-    image0 = image0 * 255.0
-    image1 = image1 * 255.0
-    image0 = tf.keras.applications.vgg16.preprocess_input(image0)
-    image1 = tf.keras.applications.vgg16.preprocess_input(image1)
-    features0 = model(image0)
-    features1 = model(image1)
+    with tf.variable_scope('vgg', reuse=True):
+        _, features0 = vgg_network.vgg16(image0)
+    with tf.variable_scope('vgg', reuse=True):
+        _, features1 = vgg_network.vgg16(image1)
     cdist = 0.0
     for feature0, feature1 in zip(features0, features1):
         cdist += cosine_distance(feature0, feature1)

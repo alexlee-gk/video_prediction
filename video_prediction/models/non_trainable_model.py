@@ -11,8 +11,7 @@ class NonTrainableVideoPredictionModel(BaseVideoPredictionModel):
 
 class GroundTruthVideoPredictionModel(NonTrainableVideoPredictionModel):
     def build_graph(self, inputs, targets=None):
-        self.inputs = inputs
-        self.targets = targets
+        super(GroundTruthVideoPredictionModel, self).build_graph(inputs, targets=targets)
 
         self.outputs = OrderedDict()
         self.outputs['gen_images'] = self.inputs['images'][:, self.hparams.context_frames:]
@@ -28,8 +27,7 @@ class GroundTruthVideoPredictionModel(NonTrainableVideoPredictionModel):
 
 class RepeatVideoPredictionModel(NonTrainableVideoPredictionModel):
     def build_graph(self, inputs, targets=None):
-        self.inputs = inputs
-        self.targets = targets
+        super(RepeatVideoPredictionModel, self).build_graph(inputs, targets=targets)
 
         self.outputs = OrderedDict()
         tile_pattern = [1, self.hparams.sequence_length - self.hparams.context_frames, 1, 1, 1]

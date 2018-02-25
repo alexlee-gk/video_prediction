@@ -11,6 +11,7 @@ from video_prediction.ops import flatten
 from video_prediction.utils import tf_utils
 from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
     replace_read_ops, print_loss_info, transpose_batch_time, add_scalar_summaries, add_summaries
+from . import vgg_network
 
 
 class BaseVideoPredictionModel:
@@ -43,16 +44,6 @@ class BaseVideoPredictionModel:
         self.gen_images = None
         self.outputs = None
         self.metrics = None
-
-        vgg_model = tf.keras.applications.vgg16.VGG16(include_top=False, weights=None)
-        outputs = [
-            vgg_model.get_layer('block1_conv2').output,
-            vgg_model.get_layer('block2_conv2').output,
-            vgg_model.get_layer('block3_conv3').output,
-            vgg_model.get_layer('block4_conv3').output,
-            vgg_model.get_layer('block5_conv3').output,
-        ]
-        self.vgg_model = tf.keras.models.Model(inputs=vgg_model.input, outputs=outputs)
 
     def get_default_hparams_dict(self):
         """
@@ -91,7 +82,12 @@ class BaseVideoPredictionModel:
         return parsed_hparams
 
     def build_graph(self, inputs, targets=None):
-        raise NotImplementedError
+        self.inputs = inputs
+        self.targets = targets
+
+        # call it once here to create the variables
+        with tf.variable_scope('vgg'):
+            vgg_network.vgg16(tf.placeholder(tf.float32, shape=[None] * 4))
 
     def metrics_fn(self, inputs, outputs, targets):
         metrics = OrderedDict()
@@ -100,19 +96,11 @@ class BaseVideoPredictionModel:
         metrics['psnr'] = vp.metrics.peak_signal_to_noise_ratio(target_images, gen_images)
         metrics['mse'] = vp.metrics.mean_squared_error(target_images, gen_images)
         metrics['ssim'] = vp.metrics.structural_similarity(target_images, gen_images)
-        metrics['vgg_cdist'] = vp.metrics.vgg_cosine_distance(target_images, gen_images, self.vgg_model)
+        metrics['vgg_cdist'] = vp.metrics.vgg_cosine_distance(target_images, gen_images)
         return metrics
 
     def restore(self, sess, checkpoints):
-        if self.vgg_model is not None:
-            tf.keras.backend.set_session(sess)
-            WEIGHTS_PATH_NO_TOP = 'https://github.com/fchollet/deep-learning-models/releases/download/v0.1/vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5'
-            weights_path = tf.keras.utils.get_file(
-                'vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5',
-                WEIGHTS_PATH_NO_TOP,
-                cache_subdir='models',
-                file_hash='6d6bbae143d832006294945121d1f1fc')
-            self.vgg_model.load_weights(weights_path)
+        vgg_network.vgg_assign_from_values_fn(var_name_prefix=self.generator_scope)(sess)
 
         if checkpoints:
             if not isinstance(checkpoints, (list, tuple)):
@@ -210,7 +198,6 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
         self.g_vars = None
         self.d_vars = None
         self.train_op = None
-        self.restore_op = None
 
     def get_default_hparams_dict(self):
         """
@@ -395,8 +382,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
         return outputs_tuple, losses_tuple, metrics
 
     def build_graph(self, inputs, targets=None):
-        self.inputs = inputs
-        self.targets = targets
+        BaseVideoPredictionModel.build_graph(self, inputs, targets=targets)
 
         global_step = tf.train.get_or_create_global_step()
 
@@ -458,7 +444,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             gen_l2_loss = vp.losses.l2_loss(gen_images, target_images)
             gen_losses["gen_l2_loss"] = (gen_l2_loss, hparams.l2_weight)
         if hparams.vgg_cdist_weight:
-            gen_vgg_cdist_loss = vp.metrics.vgg_cosine_distance(gen_images, target_images, self.vgg_model)
+            gen_vgg_cdist_loss = vp.metrics.vgg_cosine_distance(gen_images, target_images)
             gen_losses['gen_vgg_cdist_loss'] = (gen_vgg_cdist_loss, hparams.vgg_cdist_weight)
         if hparams.feature_l2_weight:
             gen_features = outputs.get('gen_features_enc', outputs['gen_features'])
@@ -553,21 +539,6 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
                 discrim_losses["discrim%s_vae_gan_loss" % infix] = (discrim_vae_gan_loss, vae_gan_weight)
         return discrim_losses
 
-    def build_restore_graph(self, checkpoints):
-        if checkpoints:
-            if not isinstance(checkpoints, (list, tuple)):
-                checkpoints = [checkpoints]
-            # automatically skip global_step if more than one checkpoint is provided
-            skip_global_step = len(checkpoints) > 1
-            savers = []
-            for checkpoint in checkpoints:
-                print("creating restore saver from checkpoint %s" % checkpoint)
-                saver, _ = tf_utils.get_checkpoint_restore_saver(checkpoint, skip_global_step=skip_global_step)
-                savers.append(saver)
-            self.restore_op = [saver.saver_def.restore_op_name for saver in savers]
-        else:
-            self.restore_op = None
-
 
 class VideoPredictionModel(SoftPlacementVideoPredictionModel):
     def __init__(self, *args, **kwargs):
@@ -584,8 +555,7 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
     def build_graph(self, inputs, targets=None):
-        self.inputs = inputs
-        self.targets = targets
+        BaseVideoPredictionModel.build_graph(self, inputs, targets=targets)
 
         global_step = tf.train.get_or_create_global_step()
 
