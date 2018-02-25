@@ -245,7 +245,8 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             video_vae_gan_weight=0.0,
             acvideo_gan_weight=0.0,
             acvideo_vae_gan_weight=0.0,
-            gan_feature_weight=0.0,
+            gan_feature_l2_weight=0.0,
+            gan_feature_cdist_weight=0.0,
             gan_loss_type='LSGAN',
             kl_weight=0.0,
             kl_anneal='linear',
@@ -475,16 +476,26 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             if gan_weight:
                 gen_gan_loss = vp.losses.gan_loss(outputs['discrim%s_logits_fake' % infix], 1.0, hparams.gan_loss_type)
                 gen_losses["gen%s_gan_loss" % infix] = (gen_gan_loss, gan_weight)
-            if gan_weight and hparams.gan_feature_weight:
+            if gan_weight and (hparams.gan_feature_l2_weight or hparams.gan_feature_cdist_weight):
                 i_feature = 0
+                discrim_features_fake = []
+                discrim_features_real = []
                 while True:
                     discrim_feature_fake = outputs.get('discrim%s_feature%d_fake' % (infix, i_feature))
                     discrim_feature_real = outputs.get('discrim%s_feature%d_real' % (infix, i_feature))
                     if discrim_feature_fake is None or discrim_feature_real is None:
                         break
-                    gen_losses["gen%s_feature%d_l2_loss" % (infix, i_feature)] = \
-                        (vp.losses.l2_loss(discrim_feature_fake, discrim_feature_real), hparams.gan_feature_weight)
+                    discrim_features_fake.append(discrim_feature_fake)
+                    discrim_features_real.append(discrim_feature_real)
                     i_feature += 1
+                if hparams.gan_feature_l2_weight:
+                    gen_gan_feature_l2_loss = sum([vp.losses.l2_loss(discrim_feature_fake, discrim_feature_real)
+                                                   for discrim_feature_fake, discrim_feature_real in zip(discrim_features_fake, discrim_features_real)])
+                    gen_losses["gen%s_gan_feature_l2_loss" % infix] = (gen_gan_feature_l2_loss, hparams.gan_feature_l2_weight)
+                if hparams.gan_feature_cdist_weight:
+                    gen_gan_feature_cdist_loss = sum([vp.metrics.cosine_distance(discrim_feature_fake, discrim_feature_real)
+                                                      for discrim_feature_fake, discrim_feature_real in zip(discrim_features_fake, discrim_features_real)])
+                    gen_losses["gen%s_gan_feature_cdist_loss" % infix] = (gen_gan_feature_cdist_loss, hparams.gan_feature_cdist_weight)
         vae_gan_weights = {'': hparams.vae_gan_weight,
                            '_tuple': hparams.tuple_vae_gan_weight,
                            '_image': hparams.image_vae_gan_weight,
@@ -494,16 +505,26 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             if vae_gan_weight:
                 gen_vae_gan_loss = vp.losses.gan_loss(outputs['discrim%s_logits_enc_fake' % infix], 1.0, hparams.gan_loss_type)
                 gen_losses["gen%s_vae_gan_loss" % infix] = (gen_vae_gan_loss, vae_gan_weight)
-            if vae_gan_weight and hparams.gan_feature_weight:
+            if vae_gan_weight and (hparams.gan_feature_l2_weight or hparams.gan_feature_cdist_weight):
                 i_feature = 0
+                discrim_features_enc_fake = []
+                discrim_features_enc_real = []
                 while True:
                     discrim_feature_enc_fake = outputs.get('discrim%s_feature%d_enc_fake' % (infix, i_feature))
                     discrim_feature_enc_real = outputs.get('discrim%s_feature%d_enc_real' % (infix, i_feature))
                     if discrim_feature_enc_fake is None or discrim_feature_enc_real is None:
                         break
-                    gen_losses["gen%s_vae_feature%d_l2_loss" % (infix, i_feature)] = \
-                        (vp.losses.l2_loss(discrim_feature_enc_fake, discrim_feature_enc_real), hparams.gan_feature_weight)
+                    discrim_features_enc_fake.append(discrim_feature_enc_fake)
+                    discrim_features_enc_real.append(discrim_feature_enc_real)
                     i_feature += 1
+                if hparams.gan_feature_l2_weight:
+                    gen_vae_gan_feature_l2_loss = sum([vp.losses.l2_loss(discrim_feature_enc_fake, discrim_feature_enc_real)
+                                                       for discrim_feature_enc_fake, discrim_feature_enc_real in zip(discrim_features_enc_fake, discrim_features_enc_real)])
+                    gen_losses["gen%s_vae_gan_feature_l2_loss" % infix] = (gen_vae_gan_feature_l2_loss, hparams.gan_feature_l2_weight)
+                if hparams.gan_feature_cdist_weight:
+                    gen_vae_gan_feature_cdist_loss = sum([vp.metrics.cosine_distance(discrim_feature_enc_fake, discrim_feature_enc_real)
+                                                          for discrim_feature_enc_fake, discrim_feature_enc_real in zip(discrim_features_enc_fake, discrim_features_enc_real)])
+                    gen_losses["gen%s_vae_gan_feature_cdist_loss" % infix] = (gen_vae_gan_feature_cdist_loss, hparams.gan_feature_cdist_weight)
         if hparams.kl_weight:
             gen_kl_loss = vp.losses.kl_loss(outputs['enc_zs_mu'], outputs['enc_zs_log_sigma_sq'])
             gen_losses["gen_kl_loss"] = (gen_kl_loss, self.kl_weight)  # possibly annealed kl_weight

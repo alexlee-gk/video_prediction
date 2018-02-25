@@ -97,8 +97,11 @@ def print_loss_info(losses, inputs, outputs, targets):
     print(tf.get_default_graph().get_name_scope())
     for name, (loss, weight) in losses.items():
         print('  %s (%r)' % (name, weight))
+        descendant_names = []
         for descendant in set(get_descendants(loss, tensor_to_names.keys())):
-            print('    %s' % tensor_to_names[descendant])
+            descendant_names.append(tensor_to_names[descendant])
+        for descendant_name in sorted(descendant_names):
+            print('    %s' % descendant_name)
 
 
 def transpose_batch_time(x):
