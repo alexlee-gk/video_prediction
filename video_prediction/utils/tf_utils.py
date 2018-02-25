@@ -190,6 +190,35 @@ def add_summaries(outputs):
     add_tensor_summaries(tensor_outputs)
 
 
+def plot_buf(y):
+    def _plot_buf(y):
+        import matplotlib as mpl
+        mpl.use('Agg')  # No display
+        import matplotlib.pyplot as plt
+        import io
+        plt.figure(figsize=(3, 3))
+        plt.plot(y)
+        plt.grid(axis='y')
+        plt.tight_layout(0)
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        plt.close()
+
+        buf.seek(0)
+        return buf
+
+    s = tf.py_func(_plot_buf, [y], tf.string)
+    return s
+
+
+def add_plot_image_summaries(metrics):
+    for name, metric in metrics.items():
+        image = tf.image.decode_png(plot_buf(metric), channels=4)
+        with tf.name_scope("%s_summary" % name):
+            tf.summary.image(name, image)
+
+
 def convert_tensor_to_gif_summary(summ):
     if isinstance(summ, bytes):
         summary_proto = tf.Summary()

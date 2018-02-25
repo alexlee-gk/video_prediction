@@ -10,7 +10,8 @@ import video_prediction as vp
 from video_prediction.ops import flatten
 from video_prediction.utils import tf_utils
 from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
-    replace_read_ops, print_loss_info, transpose_batch_time, add_scalar_summaries, add_summaries
+    replace_read_ops, print_loss_info, transpose_batch_time, add_scalar_summaries, add_summaries, \
+    add_plot_image_summaries
 from . import vgg_network
 
 
@@ -93,10 +94,16 @@ class BaseVideoPredictionModel:
         metrics = OrderedDict()
         target_images = targets
         gen_images = outputs['gen_images']
-        metrics['psnr'] = vp.metrics.peak_signal_to_noise_ratio(target_images, gen_images)
-        metrics['mse'] = vp.metrics.mean_squared_error(target_images, gen_images)
-        metrics['ssim'] = vp.metrics.structural_similarity(target_images, gen_images)
-        metrics['vgg_cdist'] = vp.metrics.vgg_cosine_distance(target_images, gen_images)
+        metric_fns = [
+            ('psnr', vp.metrics.peak_signal_to_noise_ratio),
+            ('mse', vp.metrics.mean_squared_error),
+            ('ssim', vp.metrics.structural_similarity),
+            ('vgg_cdist', vp.metrics.vgg_cosine_distance),
+        ]
+        for metric_name, metric_fn in metric_fns:
+            metric = tf.map_fn(lambda args: metric_fn(*args), (target_images, gen_images), dtype=tf.float32)
+            metrics[metric_name + '_t'] = metric
+            metrics[metric_name] = tf.reduce_mean(metric)
         return metrics
 
     def restore(self, sess, checkpoints):
@@ -430,7 +437,8 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
         add_scalar_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims == 0})
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
-        add_scalar_summaries(self.metrics)
+        add_scalar_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 0})
+        add_plot_image_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 1})
 
     def generator_loss_fn(self, inputs, outputs, targets):
         hparams = self.hparams
@@ -663,4 +671,5 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
         add_scalar_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims == 0})
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
-        add_scalar_summaries(self.metrics)
+        add_scalar_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 0})
+        add_plot_image_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 1})
