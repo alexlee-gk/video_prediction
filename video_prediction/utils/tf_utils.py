@@ -192,21 +192,20 @@ def add_summaries(outputs):
 
 def plot_buf(y):
     def _plot_buf(y):
-        import matplotlib as mpl
-        mpl.use('Agg')  # No display
-        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+        from matplotlib.figure import Figure
         import io
-        plt.figure(figsize=(3, 3))
-        plt.plot(y)
-        plt.grid(axis='y')
-        plt.tight_layout(0)
+        fig = Figure(figsize=(3, 3))
+        canvas = FigureCanvas(fig)
+        ax = fig.add_subplot(111)
+        ax.plot(y)
+        ax.grid(axis='y')
+        fig.tight_layout(pad=0)
 
         buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        plt.close()
-
+        fig.savefig(buf, format='png')
         buf.seek(0)
-        return buf
+        return buf.getvalue()
 
     s = tf.py_func(_plot_buf, [y], tf.string)
     return s
@@ -215,8 +214,9 @@ def plot_buf(y):
 def add_plot_image_summaries(metrics):
     for name, metric in metrics.items():
         image = tf.image.decode_png(plot_buf(metric), channels=4)
+        image = tf.expand_dims(image, axis=0)
         with tf.name_scope("%s_summary" % name):
-            tf.summary.image(name, image)
+            tf.summary.image(name, image, max_outputs=1)
 
 
 def convert_tensor_to_gif_summary(summ):
@@ -228,7 +228,11 @@ def convert_tensor_to_gif_summary(summ):
     summary = tf.Summary()
     for value in summ.value:
         tag = value.tag
-        images_arr = tf.make_ndarray(value.tensor)
+        try:
+            images_arr = tf.make_ndarray(value.tensor)
+        except TypeError:
+            summary.value.add(tag=tag, image=value.image)
+            continue
 
         if len(images_arr.shape) == 5:
             images_arr = np.concatenate(list(images_arr), axis=-2)
