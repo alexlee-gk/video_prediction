@@ -9,9 +9,9 @@ from tensorflow.python.util import nest
 import video_prediction as vp
 from video_prediction.ops import flatten
 from video_prediction.utils import tf_utils
-from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
-    replace_read_ops, print_loss_info, transpose_batch_time, add_scalar_summaries, add_summaries, \
-    add_plot_image_summaries
+from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_tensors, reduce_mean_tensors, \
+    local_device_setter, replace_read_ops, print_loss_info, transpose_batch_time, add_scalar_summaries, \
+    add_summaries, add_plot_image_summaries
 from . import vgg_network
 
 
@@ -656,7 +656,7 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
             self.gen_images, self.gen_images_enc, self.outputs = reduce_tensors(tower_outputs_tuple)
             self.d_losses = reduce_tensors(tower_d_losses, shallow=True)
             self.g_losses = reduce_tensors(tower_g_losses, shallow=True)
-            self.metrics = reduce_tensors(tower_metrics)
+            self.metrics = reduce_mean_tensors(tower_metrics)
             self.d_loss = reduce_tensors(tower_d_loss)
             self.g_loss = reduce_tensors(tower_g_loss)
 

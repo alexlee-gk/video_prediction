@@ -324,6 +324,35 @@ def reduce_tensors(structures, shallow=False):
     return reduced_structure
 
 
+def _reduce_mean_entries(*entries):
+    num_gpus = len(entries)
+    if entries[0] is None:
+        assert all(entry is None for entry in entries[1:])
+        reduced_entry = None
+    elif isinstance(entries[0], tf.Tensor):
+        reduced_entry = tf.add_n(entries) / tf.to_float(num_gpus)
+    elif np.isscalar(entries[0]) or isinstance(entries[0], np.ndarray):
+        reduced_entry = sum(entries) / float(num_gpus)
+    else:
+        raise NotImplementedError
+    return reduced_entry
+
+
+def reduce_mean_tensors(structures, shallow=False):
+    if len(structures) == 1:
+        reduced_structure = structures[0]
+    else:
+        if shallow:
+            if isinstance(structures[0], dict):
+                shallow_tree = type(structures[0])([(k, None) for k in structures[0]])
+            else:
+                shallow_tree = type(structures[0])([None for _ in structures[0]])
+            reduced_structure = nest.map_structure_up_to(shallow_tree, _reduce_mean_entries, *structures)
+        else:
+            reduced_structure = nest.map_structure(_reduce_mean_entries, *structures)
+    return reduced_structure
+
+
 def NewCheckpointReader(checkpoint):
     # tf.pywrap_tensorflow.NewCheckpointReader doesn't work when the path has
     # special characters, so create a symlinked directory just for opening
