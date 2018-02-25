@@ -100,7 +100,7 @@ class BaseVideoPredictionModel:
         return metrics
 
     def restore(self, sess, checkpoints):
-        vgg_network.vgg_assign_from_values_fn(var_name_prefix=self.generator_scope)(sess)
+        vgg_network.vgg_assign_from_values_fn(var_name_prefix=self.generator_scope + '/')(sess)
 
         if checkpoints:
             if not isinstance(checkpoints, (list, tuple)):
