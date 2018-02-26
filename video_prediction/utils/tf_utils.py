@@ -213,7 +213,11 @@ def plot_buf(y):
 
 def add_plot_image_summaries(metrics):
     for name, metric in metrics.items():
-        image = tf.image.decode_png(plot_buf(metric), channels=4)
+        try:
+            buf = plot_buf(metric)
+        except:
+            continue
+        image = tf.image.decode_png(buf, channels=4)
         image = tf.expand_dims(image, axis=0)
         with tf.name_scope("%s_summary" % name):
             tf.summary.image(name, image, max_outputs=1)
