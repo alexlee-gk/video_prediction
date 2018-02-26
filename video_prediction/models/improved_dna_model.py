@@ -422,12 +422,14 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                     with tf.variable_scope('dna_kernels'):
                         kernels = conv2d(h_dna_kernel, np.prod(kernel_shape), kernel_size=(3, 3), strides=(1, 1))
                         kernels = tf.reshape(kernels, [batch_size, height, width] + kernel_shape)
+                        kernels = kernels + identity_kernel(self.hparams.kernel_size)[None, None, None, :, :, None]
                     kernel_spatial_axes = [3, 4]
                 elif self.hparams.transformation == 'cdna':
                     with tf.variable_scope('cdna_kernels'):
                         smallest_layer = layers[num_encoder_layers - 1][-1]
                         kernels = dense(flatten(smallest_layer), np.prod(kernel_shape))
                         kernels = tf.reshape(kernels, [batch_size] + kernel_shape)
+                        kernels = kernels + identity_kernel(self.hparams.kernel_size)[None, :, :, None]
                     kernel_spatial_axes = [1, 2]
                 else:
                     raise ValueError('Invalid transformation %s' % self.hparams.transformation)
@@ -756,3 +758,18 @@ def apply_flows(image, flows):
         flows = tf.unstack(flows, axis=-1)
         outputs = [flow_ops.image_warp(image, flow) for flow in flows]
     return outputs
+
+
+def identity_kernel(kernel_size):
+    kh, kw = kernel_size
+    kernel = np.zeros(kernel_size)
+
+    def center_slice(k):
+        if k % 2 == 0:
+            return slice(k // 2 - 1, k // 2 + 1)
+        else:
+            return slice(k // 2, k // 2 + 1)
+
+    kernel[center_slice(kh), center_slice(kw)] = 1.0
+    kernel /= np.sum(kernel)
+    return kernel

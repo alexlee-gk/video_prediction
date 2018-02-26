@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 
 from video_prediction import ops, flow_ops
-from video_prediction.models.improved_dna_model import apply_kernels
+from video_prediction.models.improved_dna_model import apply_kernels, identity_kernel
 from video_prediction.ops import conv2d, tile_concat, flatten
 from video_prediction.ops import dense, upsample_conv2d, conv_pool2d
 from video_prediction.rnn_ops import BasicConv2DLSTMCell, Conv2DGRUCell
@@ -457,18 +457,3 @@ class PSPNet50VideoPredictionModel(VideoPredictionModel):
     def restore(self, sess, checkpoints):
         pspnet_network.pspnet50_assign_from_values_fn(var_name_prefix=self.generator_scope + '/encoder/')(sess)
         super(PSPNet50VideoPredictionModel, self).restore(sess, checkpoints)
-
-
-def identity_kernel(kernel_size):
-    kh, kw = kernel_size
-    kernel = np.zeros(kernel_size)
-
-    def center_slice(k):
-        if k % 2 == 0:
-            return slice(k // 2 - 1, k // 2 + 1)
-        else:
-            return slice(k // 2, k // 2 + 1)
-
-    kernel[center_slice(kh), center_slice(kw)] = 1.0
-    kernel /= np.sum(kernel)
-    return kernel
