@@ -1,5 +1,4 @@
 import itertools
-from collections import OrderedDict
 
 import numpy as np
 import tensorflow as tf
@@ -7,7 +6,7 @@ from tensorflow.python.util import nest
 
 from video_prediction import ops, flow_ops
 from video_prediction.models import VideoPredictionModel
-from video_prediction.models import pix2pix_model, mocogan_model
+from video_prediction.models import pix2pix_model, mocogan_model, spectral_norm_model
 from video_prediction.ops import lrelu, dense, pad2d, conv2d, upsample_conv2d, conv_pool2d, flatten, tile_concat, pool2d
 from video_prediction.rnn_ops import BasicConv2DLSTMCell, Conv2DGRUCell
 from video_prediction.utils import tf_utils
@@ -128,6 +127,10 @@ def discriminator_fn(targets, inputs=None, hparams=None):
             hparams.acvideo_gan_weight or hparams.acvideo_vae_gan_weight:
         _, mocogan_outputs = mocogan_model.discriminator_fn(targets, inputs=inputs, hparams=hparams)
         outputs.update(mocogan_outputs)
+    if hparams.image_sn_gan_weight or hparams.image_sn_vae_gan_weight or \
+            hparams.video_sn_gan_weight or hparams.video_sn_vae_gan_weight:
+        _, spectral_norm_outputs = spectral_norm_model.discriminator_fn(targets, inputs=inputs, hparams=hparams)
+        outputs.update(spectral_norm_outputs)
     return None, outputs
 
 

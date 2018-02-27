@@ -2,11 +2,13 @@ import numpy as np
 import tensorflow as tf
 
 
-def dense(inputs, units):
+def dense(inputs, units, use_spectral_norm=False):
     with tf.variable_scope('dense'):
         input_shape = inputs.get_shape().as_list()
         kernel_shape = [input_shape[1], units]
         kernel = tf.get_variable('kernel', kernel_shape, dtype=tf.float32, initializer=tf.truncated_normal_initializer(stddev=0.02))
+        if use_spectral_norm:
+            kernel = spectral_normed_weight(kernel)
         bias = tf.get_variable('bias', [units], dtype=tf.float32, initializer=tf.zeros_initializer())
         outputs = tf.matmul(inputs, kernel) + bias
         return outputs
@@ -487,7 +489,7 @@ def depthwise_conv2d(inputs, channel_multiplier, kernel_size, strides=(1, 1), pa
     return outputs
 
 
-def conv2d(inputs, filters, kernel_size, strides=(1, 1), padding='SAME', kernel=None, use_bias=True, bias=None):
+def conv2d(inputs, filters, kernel_size, strides=(1, 1), padding='SAME', kernel=None, use_bias=True, bias=None, use_spectral_norm=False):
     """
     2-D convolution.
 
@@ -511,6 +513,8 @@ def conv2d(inputs, filters, kernel_size, strides=(1, 1), padding='SAME', kernel=
         with tf.variable_scope('conv2d'):
             kernel = tf.get_variable('kernel', kernel_shape, dtype=tf.float32,
                                      initializer=tf.truncated_normal_initializer(stddev=0.02))
+            if use_spectral_norm:
+                kernel = spectral_normed_weight(kernel)
     else:
         if kernel.get_shape().as_list() not in (kernel_shape, [input_shape[0]] + kernel_shape):
             raise ValueError("Expecting kernel with shape %s or %s but instead got kernel with shape %s"
@@ -755,13 +759,15 @@ def upsample_conv2d_v2(inputs, filters, kernel_size, strides=(1, 1), padding='SA
     return outputs
 
 
-def conv3d(inputs, filters, kernel_size, strides=(1, 1), padding='SAME'):
+def conv3d(inputs, filters, kernel_size, strides=(1, 1), padding='SAME', use_spectral_norm=False):
     with tf.variable_scope('conv3d'):
         kernel_size = list(kernel_size) if isinstance(kernel_size, (tuple, list)) else [kernel_size] * 3
         strides = list(strides) if isinstance(strides, (tuple, list)) else [strides] * 3
         input_shape = inputs.get_shape().as_list()
         kernel_shape = list(kernel_size) + [input_shape[-1], filters]
         kernel = tf.get_variable('kernel', kernel_shape, dtype=tf.float32, initializer=tf.truncated_normal_initializer(stddev=0.02))
+        if use_spectral_norm:
+            kernel = spectral_normed_weight(kernel)
         outputs = tf.nn.conv3d(inputs, kernel, [1] + strides + [1], padding=padding)
         bias = tf.get_variable('bias', [filters], dtype=tf.float32, initializer=tf.zeros_initializer())
         outputs = tf.nn.bias_add(outputs, bias)
@@ -1006,6 +1012,38 @@ def sigmoid_kl_with_logits(logits, targets):
     else:
         entropy = - targets * np.log(targets) - (1. - targets) * np.log(1. - targets)
     return tf.nn.sigmoid_cross_entropy_with_logits(logits=logits, labels=tf.ones_like(logits) * targets) - entropy
+
+
+def spectral_normed_weight(W, u=None, num_iters=1):
+    SPECTRAL_NORMALIZATION_VARIABLES = 'spectral_normalization_variables'
+
+    # Usually num_iters = 1 will be enough
+    W_shape = W.shape.as_list()
+    W_reshaped = tf.reshape(W, [-1, W_shape[-1]])
+    if u is None:
+        u = tf.get_variable("u", [1, W_shape[-1]], initializer=tf.truncated_normal_initializer(), trainable=False)
+
+    def l2normalize(v, eps=1e-12):
+        return v / (tf.norm(v) + eps)
+
+    def power_iteration(i, u_i, v_i):
+        v_ip1 = l2normalize(tf.matmul(u_i, tf.transpose(W_reshaped)))
+        u_ip1 = l2normalize(tf.matmul(v_ip1, W_reshaped))
+        return i + 1, u_ip1, v_ip1
+    _, u_final, v_final = tf.while_loop(
+        cond=lambda i, _1, _2: i < num_iters,
+        body=power_iteration,
+        loop_vars=(tf.constant(0, dtype=tf.int32),
+                   u, tf.zeros(dtype=tf.float32, shape=[1, W_reshaped.shape.as_list()[0]]))
+    )
+    sigma = tf.squeeze(tf.matmul(tf.matmul(v_final, W_reshaped), tf.transpose(u_final)))
+    W_bar_reshaped = W_reshaped / sigma
+    W_bar = tf.reshape(W_bar_reshaped, W_shape)
+
+    if u not in tf.get_collection(SPECTRAL_NORMALIZATION_VARIABLES):
+        tf.add_to_collection(SPECTRAL_NORMALIZATION_VARIABLES, u)
+        tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, u.assign(u_final))
+    return W_bar
 
 
 def get_norm_layer(layer_type):

@@ -252,6 +252,10 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             video_vae_gan_weight=0.0,
             acvideo_gan_weight=0.0,
             acvideo_vae_gan_weight=0.0,
+            image_sn_gan_weight=0.0,
+            image_sn_vae_gan_weight=0.0,
+            video_sn_gan_weight=0.0,
+            video_sn_vae_gan_weight=0.0,
             gan_feature_l2_weight=0.0,
             gan_feature_cdist_weight=0.0,
             gan_loss_type='LSGAN',
@@ -409,11 +413,12 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
 
         if self.d_losses or self.g_losses:
             with tf.name_scope('optimize'):
-                if self.d_losses:
-                    d_gradvars = self.d_optimizer.compute_gradients(self.d_loss, var_list=self.d_vars)
-                    d_train_op = self.d_optimizer.apply_gradients(d_gradvars)
-                else:
-                    d_train_op = tf.no_op()
+                with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                    if self.d_losses:
+                        d_gradvars = self.d_optimizer.compute_gradients(self.d_loss, var_list=self.d_vars)
+                        d_train_op = self.d_optimizer.apply_gradients(d_gradvars)
+                    else:
+                        d_train_op = tf.no_op()
                 with tf.control_dependencies([d_train_op]):
                     if g_losses_post:
                         replace_read_ops(g_loss_post, self.d_vars)
@@ -479,7 +484,9 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
                        '_tuple': hparams.tuple_gan_weight,
                        '_image': hparams.image_gan_weight,
                        '_video': hparams.video_gan_weight,
-                       '_acvideo': hparams.acvideo_gan_weight}
+                       '_acvideo': hparams.acvideo_gan_weight,
+                       '_image_sn': hparams.image_sn_gan_weight,
+                       '_video_sn': hparams.video_sn_gan_weight}
         for infix, gan_weight in gan_weights.items():
             if gan_weight:
                 gen_gan_loss = vp.losses.gan_loss(outputs['discrim%s_logits_fake' % infix], 1.0, hparams.gan_loss_type)
@@ -508,7 +515,9 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
                            '_tuple': hparams.tuple_vae_gan_weight,
                            '_image': hparams.image_vae_gan_weight,
                            '_video': hparams.video_vae_gan_weight,
-                           '_acvideo': hparams.acvideo_vae_gan_weight}
+                           '_acvideo': hparams.acvideo_vae_gan_weight,
+                           '_image_sn': hparams.image_sn_vae_gan_weight,
+                           '_video_sn': hparams.video_sn_vae_gan_weight}
         for infix, vae_gan_weight in vae_gan_weights.items():
             if vae_gan_weight:
                 gen_vae_gan_loss = vp.losses.gan_loss(outputs['discrim%s_logits_enc_fake' % infix], 1.0, hparams.gan_loss_type)
@@ -548,7 +557,9 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
                        '_tuple': hparams.tuple_gan_weight,
                        '_image': hparams.image_gan_weight,
                        '_video': hparams.video_gan_weight,
-                       '_acvideo': hparams.acvideo_gan_weight}
+                       '_acvideo': hparams.acvideo_gan_weight,
+                       '_image_sn': hparams.image_sn_gan_weight,
+                       '_video_sn': hparams.video_sn_gan_weight}
         for infix, gan_weight in gan_weights.items():
             if gan_weight:
                 discrim_gan_loss_real = vp.losses.gan_loss(outputs['discrim%s_logits_real' % infix], 1.0, hparams.gan_loss_type)
@@ -559,7 +570,9 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
                            '_tuple': hparams.tuple_vae_gan_weight,
                            '_image': hparams.image_vae_gan_weight,
                            '_video': hparams.video_vae_gan_weight,
-                           '_acvideo': hparams.acvideo_vae_gan_weight}
+                           '_acvideo': hparams.acvideo_vae_gan_weight,
+                           '_image_sn': hparams.image_sn_vae_gan_weight,
+                           '_video_sn': hparams.video_sn_vae_gan_weight}
         for infix, vae_gan_weight in vae_gan_weights.items():
             if vae_gan_weight:
                 discrim_vae_gan_loss_real = vp.losses.gan_loss(outputs['discrim%s_logits_enc_real' % infix], 1.0, hparams.gan_loss_type)
@@ -633,11 +646,12 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
 
         if any(tower_d_losses) or any(tower_g_losses):
             with tf.name_scope('optimize'):
-                if any(tower_d_losses):
-                    d_gradvars = compute_averaged_gradients(self.d_optimizer, tower_d_loss, var_list=self.d_vars)
-                    d_train_op = self.d_optimizer.apply_gradients(d_gradvars)
-                else:
-                    d_train_op = tf.no_op()
+                with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                    if any(tower_d_losses):
+                        d_gradvars = compute_averaged_gradients(self.d_optimizer, tower_d_loss, var_list=self.d_vars)
+                        d_train_op = self.d_optimizer.apply_gradients(d_gradvars)
+                    else:
+                        d_train_op = tf.no_op()
                 with tf.control_dependencies([d_train_op]):
                     if any(tower_g_losses_post):
                         replace_read_ops(tower_g_loss_post, self.d_vars)

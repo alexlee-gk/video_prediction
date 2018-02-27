@@ -25,6 +25,13 @@ def gan_loss(logits, labels, gan_loss_type):
         # discrim_loss = tf.reduce_mean((tf.square(predict_real - 1) + tf.square(predict_fake)))
         # gen_loss = tf.reduce_mean(tf.square(predict_fake - 1))
         loss = tf.reduce_mean(tf.square(logits - labels))
+    elif gan_loss_type == 'SNGAN':
+        if labels == 0.0:
+            loss = tf.reduce_mean(tf.nn.softplus(logits))
+        elif labels == 1.0:
+            loss = tf.reduce_mean(tf.nn.softplus(-logits))
+        else:
+            raise NotImplementedError
     else:
         raise ValueError('Unknown GAN loss type %s' % gan_loss_type)
     return loss
