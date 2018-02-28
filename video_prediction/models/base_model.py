@@ -174,8 +174,12 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             self.learning_rate = lr + (end_lr - lr) * tf.to_float(step - start_step) / tf.to_float(end_step - start_step)
         else:
             self.learning_rate = self.hparams.lr
-        self.g_optimizer = tf.train.AdamOptimizer(self.learning_rate, self.hparams.beta1, self.hparams.beta2)
-        self.d_optimizer = tf.train.AdamOptimizer(self.learning_rate, self.hparams.beta1, self.hparams.beta2)
+        if mode == 'train':
+            self.g_optimizer = tf.train.AdamOptimizer(self.learning_rate, self.hparams.beta1, self.hparams.beta2)
+            self.d_optimizer = tf.train.AdamOptimizer(self.learning_rate, self.hparams.beta1, self.hparams.beta2)
+        else:
+            self.g_optimizer = None
+            self.d_optimizer = None
 
         if self.hparams.kl_weight:
             if self.hparams.kl_anneal == 'none':
@@ -411,7 +415,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
         self.d_vars = d_vars + [de_var for de_var in de_vars if de_var not in d_vars]
         self.g_vars = tf.trainable_variables(self.generator_scope)
 
-        if self.d_losses or self.g_losses:
+        if self.mode == 'train' and (self.d_losses or self.g_losses):
             with tf.name_scope('optimize'):
                 with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                     if self.d_losses:
@@ -643,7 +647,7 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
         self.d_vars = d_vars + [de_var for de_var in de_vars if de_var not in d_vars]
         self.g_vars = tf.trainable_variables(self.generator_scope)
 
-        if any(tower_d_losses) or any(tower_g_losses):
+        if self.mode == 'train' and (any(tower_d_losses) or any(tower_g_losses)):
             with tf.name_scope('optimize'):
                 with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                     if any(tower_d_losses):

@@ -460,7 +460,7 @@ class FlowVideoPredictionModel(VideoPredictionModel):
 
     def parse_hparams(self, hparams_dict, hparams):
         hparams = super(FlowVideoPredictionModel, self).parse_hparams(hparams_dict, hparams)
-        if self.mode != 'train':
+        if self.mode == 'test':
             def override_hparams_maybe(name, value):
                 orig_value = hparams.values()[name]
                 if orig_value != value:
