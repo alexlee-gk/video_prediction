@@ -18,7 +18,8 @@ RELU_SHIFT = 1e-12
 def create_legacy_encoder(inputs,
                           nz=8,
                           nef=64,
-                          norm_layer='instance'):
+                          norm_layer='instance',
+                          include_top=True):
     norm_layer = ops.get_norm_layer(norm_layer)
 
     with tf.variable_scope('h1'):
@@ -37,12 +38,15 @@ def create_legacy_encoder(inputs,
         h3 = tf.nn.relu(h3)
         h3_flatten = flatten(h3)
 
-    with tf.variable_scope('z_mu'):
-        z_mu = dense(h3_flatten, nz)
-    with tf.variable_scope('z_log_sigma_sq'):
-        z_log_sigma_sq = dense(h3_flatten, nz)
-        z_log_sigma_sq = tf.clip_by_value(z_log_sigma_sq, -10, 10)
-    outputs = {'enc_zs_mu': z_mu, 'enc_zs_log_sigma_sq': z_log_sigma_sq}
+    if include_top:
+        with tf.variable_scope('z_mu'):
+            z_mu = dense(h3_flatten, nz)
+        with tf.variable_scope('z_log_sigma_sq'):
+            z_log_sigma_sq = dense(h3_flatten, nz)
+            z_log_sigma_sq = tf.clip_by_value(z_log_sigma_sq, -10, 10)
+        outputs = {'enc_zs_mu': z_mu, 'enc_zs_log_sigma_sq': z_log_sigma_sq}
+    else:
+        outputs = h3_flatten
     return outputs
 
 
@@ -50,7 +54,8 @@ def create_n_layer_encoder(inputs,
                            nz=8,
                            nef=64,
                            n_layers=3,
-                           norm_layer='instance'):
+                           norm_layer='instance',
+                           include_top=True):
     norm_layer = ops.get_norm_layer(norm_layer)
     layers = []
     paddings = [[0, 0], [1, 1], [1, 1], [0, 0]]
@@ -71,33 +76,67 @@ def create_n_layer_encoder(inputs,
     pooled = pool2d(rectified, rectified.shape[1:3].as_list(), padding='VALID', pool_mode='avg')
     squeezed = tf.squeeze(pooled, [1, 2])
 
-    with tf.variable_scope('z_mu'):
-        z_mu = dense(squeezed, nz)
-    with tf.variable_scope('z_log_sigma_sq'):
-        z_log_sigma_sq = dense(squeezed, nz)
-        z_log_sigma_sq = tf.clip_by_value(z_log_sigma_sq, -10, 10)
-    outputs = {'enc_zs_mu': z_mu, 'enc_zs_log_sigma_sq': z_log_sigma_sq}
+    if include_top:
+        with tf.variable_scope('z_mu'):
+            z_mu = dense(squeezed, nz)
+        with tf.variable_scope('z_log_sigma_sq'):
+            z_log_sigma_sq = dense(squeezed, nz)
+            z_log_sigma_sq = tf.clip_by_value(z_log_sigma_sq, -10, 10)
+        outputs = {'enc_zs_mu': z_mu, 'enc_zs_log_sigma_sq': z_log_sigma_sq}
+    else:
+        outputs = squeezed
     return outputs
 
 
-def create_encoder(inputs, e_net='legacy', **kwargs):
-    should_flatten = inputs.shape.ndims > 4
-    if should_flatten:
-        batch_shape = inputs.shape[:-3].as_list()
-        inputs = flatten(inputs, 0, len(batch_shape) - 1)
+def create_encoder(inputs, e_net='legacy', use_e_rnn=False, rnn='lstm', **kwargs):
+    assert inputs.shape.ndims == 5
+    batch_shape = inputs.shape[:-3].as_list()
+    inputs = flatten(inputs, 0, len(batch_shape) - 1)
+    unflatten = lambda x: tf.reshape(x, batch_shape + x.shape.as_list()[1:])
 
-    if e_net == 'legacy':
-        kwargs.pop('n_layers', None)  # unused
-        outputs = create_legacy_encoder(inputs, **kwargs)
-    elif e_net == 'n_layer':
-        outputs = create_n_layer_encoder(inputs, **kwargs)
+    if use_e_rnn:
+        if e_net == 'legacy':
+            kwargs.pop('n_layers', None)  # unused
+            h = create_legacy_encoder(inputs, include_top=False, **kwargs)
+            with tf.variable_scope('h4'):
+                h = dense(h, kwargs['nef'] * 4)
+        elif e_net == 'n_layer':
+            h = create_n_layer_encoder(inputs, include_top=False, **kwargs)
+            with tf.variable_scope('layer_%d' % (kwargs['n_layers'] + 1)):
+                h = dense(h, kwargs['nef'] * 4)
+        else:
+            raise ValueError('Invalid encoder net %s' % e_net)
+
+        if rnn == 'lstm':
+            RNNCell = tf.contrib.rnn.BasicLSTMCell
+        elif rnn == 'gru':
+            RNNCell = tf.contrib.rnn.GRUCell
+        else:
+            raise NotImplementedError
+
+        h = nest.map_structure(unflatten, h)
+        for i in range(2):
+            with tf.variable_scope('%s_h%d' % (rnn, i)):
+                rnn_cell = RNNCell(kwargs['nef'] * 4)
+                h, _ = tf.nn.dynamic_rnn(rnn_cell, h, dtype=tf.float32, time_major=True)
+        h = flatten(h, 0, len(batch_shape) - 1)
+
+        with tf.variable_scope('z_mu'):
+            z_mu = dense(h, kwargs['nz'])
+        with tf.variable_scope('z_log_sigma_sq'):
+            z_log_sigma_sq = dense(h, kwargs['nz'])
+            z_log_sigma_sq = tf.clip_by_value(z_log_sigma_sq, -10, 10)
+        outputs = {'enc_zs_mu': z_mu, 'enc_zs_log_sigma_sq': z_log_sigma_sq}
     else:
-        raise ValueError('Invalid encoder net %s' % e_net)
+        if e_net == 'legacy':
+            kwargs.pop('n_layers', None)  # unused
+            outputs = create_legacy_encoder(inputs, include_top=True, **kwargs)
+        elif e_net == 'n_layer':
+            outputs = create_n_layer_encoder(inputs, include_top=True, **kwargs)
+        else:
+            raise ValueError('Invalid encoder net %s' % e_net)
 
-    if should_flatten:
-        def unflatten(x):
-            return tf.reshape(x, batch_shape + x.shape.as_list()[1:])
-        outputs = nest.map_structure(unflatten, outputs)
+    outputs = nest.map_structure(unflatten, outputs)
     return outputs
 
 
@@ -110,6 +149,8 @@ def encoder_fn(inputs, hparams=None):
                                    tf.expand_dims(tf.expand_dims(inputs['actions'], axis=-2), axis=-2)], axis=-1)
     outputs = create_encoder(image_pairs,
                              e_net=hparams.e_net,
+                             use_e_rnn=hparams.use_e_rnn,
+                             rnn=hparams.rnn,
                              nz=hparams.nz,
                              nef=hparams.nef,
                              n_layers=hparams.n_layers,
@@ -631,6 +672,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             schedule_sampling_k=900.0,
             schedule_sampling_steps=(0, 100000),
             e_net='n_layer',
+            use_e_rnn=False,
             nz=8,
             num_samples=8,
             nef=32,
