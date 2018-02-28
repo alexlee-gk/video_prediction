@@ -3,7 +3,7 @@ import tensorflow as tf
 
 
 def vgg_assign_from_values_fn(model='vgg16',
-                              var_name_prefix='generator/',
+                              var_name_prefix='vgg/',
                               var_name_kernel_postfix='/kernel:0',
                               var_name_bias_postfix='/bias:0'):
     if model not in ('vgg16', 'vgg19'):

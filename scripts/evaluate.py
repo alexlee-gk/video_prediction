@@ -139,9 +139,9 @@ def save_prediction_results(task_dir, results, model_hparams, sample_start_ind=0
     sequence_length = model_hparams.sequence_length
     context_images, images = np.split(results['images'], [context_frames], axis=1)
     gen_images = results['gen_images'][:, context_frames - sequence_length:]
-    psnr = metrics.peak_signal_to_noise_ratio_np(images, gen_images, axis=tuple(range(2, images.ndim)))
-    mse = metrics.mean_squared_error_np(images, gen_images, axis=tuple(range(2, images.ndim)))
-    ssim = metrics.structural_similarity_np(images, gen_images, axis=())
+    psnr = metrics.peak_signal_to_noise_ratio_np(images, gen_images, keep_axis=(0, 1))
+    mse = metrics.mean_squared_error_np(images, gen_images, keep_axis=(0, 1))
+    ssim = metrics.structural_similarity_np(images, gen_images, keep_axis=(0, 1))
     save_metrics(os.path.join(task_dir, 'metrics', 'psnr'),
                  psnr, sample_start_ind=sample_start_ind)
     save_metrics(os.path.join(task_dir, 'metrics', 'mse'),
@@ -163,7 +163,7 @@ def save_motion_results(task_dir, results, model_hparams, draw_center=False,
     sequence_length = model_hparams.sequence_length
     pix_distribs = results['pix_distribs'][:, context_frames:]
     gen_pix_distribs = results['gen_pix_distribs'][:, context_frames - sequence_length:]
-    pix_dist = metrics.expected_pixel_distance_np(pix_distribs, gen_pix_distribs, axis=-1)
+    pix_dist = metrics.expected_pixel_distance_np(pix_distribs, gen_pix_distribs, keep_axis=(0, 1))
     save_metrics(os.path.join(task_dir, 'metrics', 'pix_dist'),
                  pix_dist, sample_start_ind=sample_start_ind)
     if only_metrics:
@@ -192,8 +192,8 @@ def save_servo_results(task_dir, results, model_hparams, sample_start_ind=0, onl
     # TODO: should exclude "context" actions assuming that they are passed in to the network
     actions = results['actions']
     gen_actions = results['gen_actions']
-    goal_image_mse = metrics.mean_squared_error_np(goal_image, gen_images[:, -1], axis=(1, 2, 3))
-    action_mse = metrics.mean_squared_error_np(actions, gen_actions, axis=tuple(range(2, actions.ndim)))
+    goal_image_mse = metrics.mean_squared_error_np(goal_image, gen_images[:, -1], keep_axis=0)
+    action_mse = metrics.mean_squared_error_np(actions, gen_actions, keep_axis=(0, 1))
     save_metrics(os.path.join(task_dir, 'metrics', 'goal_image_mse'),
                  goal_image_mse[:, None], sample_start_ind=sample_start_ind)
     save_metrics(os.path.join(task_dir, 'metrics', 'action_mse'),
@@ -386,7 +386,7 @@ def main():
                 all_results = nest.map_structure(lambda *x: np.stack(x), *all_results)
                 all_context_images, all_images = np.split(all_results['images'], [context_frames], axis=2)
                 all_gen_images = all_results['gen_images'][:, :, context_frames - sequence_length:]
-                all_mse = metrics.mean_squared_error_np(all_images, all_gen_images, axis=tuple(range(2, all_images.ndim)))
+                all_mse = metrics.mean_squared_error_np(all_images, all_gen_images, keep_axis=(0, 1))
                 all_mse_argsort = np.argsort(all_mse, axis=0)
 
                 for subtask, argsort_ind in zip(['_best', '_median', '_worst'],
