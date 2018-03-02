@@ -11,7 +11,7 @@ from video_prediction.ops import flatten
 from video_prediction.utils import tf_utils
 from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_tensors, reduce_mean_tensors, \
     local_device_setter, replace_read_ops, print_loss_info, transpose_batch_time, add_scalar_summaries, \
-    add_summaries
+    add_plot_summaries, add_summaries
 from . import vgg_network
 
 
@@ -447,6 +447,8 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
         add_scalar_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 0})
+        add_plot_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 1},
+                           x_offset=self.context_frames + 1)
 
     def generator_loss_fn(self, inputs, outputs, targets):
         hparams = self.hparams
@@ -689,3 +691,6 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
         add_scalar_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 0})
+        add_scalar_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 0})
+        add_plot_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 1},
+                           x_offset=self.hparams.context_frames + 1)

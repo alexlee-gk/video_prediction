@@ -639,6 +639,7 @@ def generator_fn(inputs, hparams=None):
     }
     if 'pix_distribs' in inputs:
         outputs['gen_pix_distribs'] = tf.stack(m.gen_distrib1, axis=0)
+    outputs = {name: output[hparams.context_frames - 1:] for name, output in outputs.items()}
     gen_images = outputs['gen_images'][hparams.context_frames - 1:]
     return gen_images, outputs
 

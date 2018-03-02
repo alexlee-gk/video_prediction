@@ -15,6 +15,9 @@ from tensorflow.python.util import nest
 from video_prediction.utils import ffmpeg_gif
 
 
+IMAGE_SUMMARIES = "image_summaries"
+
+
 def local_device_setter(num_devices=1,
                         ps_device_type='cpu',
                         worker_device='/cpu:0',
@@ -157,13 +160,13 @@ def tensor_to_image_batch(tensor):
 def add_image_summaries(outputs):
     for name, output in outputs.items():
         with tf.name_scope("%s_summary" % name):
-            tf.summary.image(name, tensor_to_image_batch(output))
+            tf.summary.image(name, tensor_to_image_batch(output), collections=[IMAGE_SUMMARIES])
 
 
 def add_tensor_summaries(outputs):
     for name, output in outputs.items():
         with tf.name_scope("%s_summary" % name):
-            tf.summary.tensor_summary(name, tensor_to_clip(output))
+            tf.summary.tensor_summary(name, tensor_to_clip(output), collections=[IMAGE_SUMMARIES])
 
 
 def add_scalar_summaries(losses_or_metrics):
@@ -221,6 +224,48 @@ def add_plot_image_summaries(metrics):
         image = tf.expand_dims(image, axis=0)
         with tf.name_scope("%s_summary" % name):
             tf.summary.image(name, image, max_outputs=1)
+
+
+def plot_summary(name, x, y, display_name=None, description=None):
+    """
+    Hack that uses pr_curve summaries for 2D plots.
+
+    Args:
+        x: 1-D tensor with values in increasing order.
+        y: 1-D tensor with static shape.
+
+    Note: tensorboard needs to be modified and compiled from source to disable
+    default axis range [-0.05, 1.05].
+    """
+    from tensorboard import summary as summary_lib
+    x = tf.convert_to_tensor(x)
+    y = tf.convert_to_tensor(y)
+    with tf.control_dependencies([
+        tf.assert_equal(tf.shape(x), tf.shape(y)),
+        tf.assert_equal(y.shape.ndims, 1),
+    ]):
+        y = tf.identity(y)
+    num_thresholds = y.shape[0].value
+    if num_thresholds is None:
+        raise ValueError('Size of y needs to be statically defined for num_thresholds argument')
+    summary = summary_lib.pr_curve_raw_data_op(
+        name,
+        true_positive_counts=tf.ones(num_thresholds),
+        false_positive_counts=tf.ones(num_thresholds),
+        true_negative_counts=tf.ones(num_thresholds),
+        false_negative_counts=tf.ones(num_thresholds),
+        precision=y[::-1],
+        recall=x[::-1],
+        num_thresholds=num_thresholds,
+        display_name=display_name,
+        description=description)
+    return summary
+
+
+def add_plot_summaries(metrics, x_offset=0):
+    for name, metric in metrics.items():
+        with tf.name_scope("%s_summary" % name):
+            plot_summary(name, x_offset + tf.range(tf.shape(metric)[0]), metric)
 
 
 def convert_tensor_to_gif_summary(summ):
