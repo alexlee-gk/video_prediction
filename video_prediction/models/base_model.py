@@ -7,11 +7,12 @@ from tensorflow.contrib.training import HParams
 from tensorflow.python.util import nest
 
 import video_prediction as vp
+from video_prediction.functional_ops import foldl
 from video_prediction.ops import flatten
 from video_prediction.utils import tf_utils
 from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_tensors, reduce_mean_tensors, \
-    local_device_setter, replace_read_ops, print_loss_info, transpose_batch_time, add_scalar_summaries, \
-    add_plot_summaries, add_summaries
+    local_device_setter, replace_read_ops, print_loss_info, transpose_batch_time, add_tensor_summaries, \
+    add_scalar_summaries, add_plot_summaries, add_summaries
 from . import vgg_network
 
 
@@ -39,12 +40,17 @@ class BaseVideoPredictionModel:
             raise ValueError('Invalid sequence_length %r. It might have to be '
                              'specified.' % self.hparams.sequence_length)
 
+        # should be overriden by descendant class if the model is stochastic
+        self.deterministic = True
+
         # member variables that should be set by `self.build_graph`
         self.inputs = None
         self.targets = None
         self.gen_images = None
         self.outputs = None
         self.metrics = None
+        self.eval_outputs = None
+        self.eval_metrics = None
 
     def get_default_hparams_dict(self):
         """
@@ -101,10 +107,66 @@ class BaseVideoPredictionModel:
             ('vgg_cdist', vp.metrics.vgg_cosine_distance),
         ]
         for metric_name, metric_fn in metric_fns:
-            metric = metric_fn(target_images, gen_images, keep_axis=0)
-            metrics[metric_name + '_t'] = metric
-            metrics[metric_name] = tf.reduce_mean(metric)
+            metrics[metric_name] = metric_fn(target_images, gen_images)
         return metrics
+
+    def eval_outputs_and_metrics_fn(self, inputs, outputs, targets, num_samples=100):
+        eval_outputs = OrderedDict()
+        eval_metrics = OrderedDict()
+        metric_fns = [
+            ('psnr', vp.metrics.peak_signal_to_noise_ratio),
+            ('mse', vp.metrics.mean_squared_error),
+            ('ssim', vp.metrics.structural_similarity),
+            ('vgg_cdist', vp.metrics.vgg_cosine_distance),
+        ]
+        if self.deterministic:
+            target_images = targets
+            gen_images = outputs['gen_images']
+            for metric_name, metric_fn in metric_fns:
+                metric = metric_fn(target_images, gen_images, keep_axis=0)
+                eval_metrics['%s_min' % metric_name] = metric
+                eval_metrics['%s_avg' % metric_name] = metric
+                eval_metrics['%s_max' % metric_name] = metric
+            eval_outputs['gen_images_det'] = gen_images
+        else:
+            def where_axis1(cond, x, y):
+                return transpose_batch_time(tf.where(cond, transpose_batch_time(x), transpose_batch_time(y)))
+
+            def accum_gen_images_and_metrics_fn(a, unused):
+                with tf.variable_scope(self.generator_scope, reuse=True):
+                    gen_images, _ = self.generator_fn(inputs)
+                for name, metric_fn in metric_fns:
+                    metric = metric_fn(targets, gen_images, keep_axis=(0, 1))  # time, batch_size
+                    cond_min = tf.less(tf.reduce_mean(metric, axis=0), tf.reduce_mean(a['%s_min' % name], axis=0))
+                    cond_max = tf.greater(tf.reduce_mean(metric, axis=0), tf.reduce_mean(a['%s_max' % name], axis=0))
+                    a['%s_min' % name] = where_axis1(cond_min, metric, a['%s_min' % name])
+                    a['%s_sum' % name] = metric + a['%s_sum' % name]
+                    a['%s_max' % name] = where_axis1(cond_max, metric, a['%s_max' % name])
+                    a['gen_images_%s_min' % name] = where_axis1(cond_min, gen_images, a['gen_images_%s_min' % name])
+                    a['gen_images_%s_sum' % name] = gen_images + a['gen_images_%s_sum' % name]
+                    a['gen_images_%s_max' % name] = where_axis1(cond_max, gen_images, a['gen_images_%s_max' % name])
+                return a
+
+            initializer = {}
+            for name, _ in metric_fns:
+                initializer['gen_images_%s_min' % name] = tf.zeros_like(targets)
+                initializer['gen_images_%s_sum' % name] = tf.zeros_like(targets)
+                initializer['gen_images_%s_max' % name] = tf.zeros_like(targets)
+                initializer['%s_min' % name] = tf.fill(targets.shape[:2], float('inf'))
+                initializer['%s_sum' % name] = tf.zeros(targets.shape[:2])
+                initializer['%s_max' % name] = tf.fill(targets.shape[:2], float('-inf'))
+
+            eval_outputs_and_metrics = foldl(accum_gen_images_and_metrics_fn, tf.zeros([num_samples, 0]),
+                                             initializer=initializer, back_prop=False, parallel_iterations=1)
+
+            for name, _ in metric_fns:
+                eval_outputs['gen_images_%s_min' % name] = eval_outputs_and_metrics['gen_images_%s_min' % name]
+                eval_outputs['gen_images_%s_avg' % name] = eval_outputs_and_metrics['gen_images_%s_sum' % name] / float(num_samples)
+                eval_outputs['gen_images_%s_max' % name] = eval_outputs_and_metrics['gen_images_%s_min' % name]
+                eval_metrics['%s_min' % name] = tf.reduce_mean(eval_outputs_and_metrics['%s_min' % name], axis=1)
+                eval_metrics['%s_avg' % name] = tf.reduce_mean(eval_outputs_and_metrics['%s_sum' % name], axis=1) / float(num_samples)
+                eval_metrics['%s_max' % name] = tf.reduce_mean(eval_outputs_and_metrics['%s_max' % name], axis=1)
+        return eval_outputs, eval_metrics
 
     def restore(self, sess, checkpoints):
         vgg_network.vgg_assign_from_values_fn()(sess)
@@ -384,28 +446,34 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
                     g_losses_post = g_losses
             with tf.name_scope("metrics"):
                 metrics = self.metrics_fn(inputs, outputs, targets)
+            with tf.name_scope("eval_outputs_and_metrics"):
+                eval_outputs, eval_metrics = self.eval_outputs_and_metrics_fn(inputs, outputs, targets)
         else:
             d_losses = {}
             g_losses = {}
             g_losses_post = {}
             metrics = {}
+            eval_outputs = {}
+            eval_metrics = {}
 
         # time-major to batch-major
-        outputs_tuple = (gen_images, gen_images_enc, outputs)
+        outputs_tuple = (gen_images, gen_images_enc, outputs, eval_outputs)
         outputs_tuple = nest.map_structure(transpose_batch_time, outputs_tuple)
         losses_tuple = (d_losses, g_losses, g_losses_post)
         losses_tuple = nest.map_structure(tf.convert_to_tensor, losses_tuple)
-        return outputs_tuple, losses_tuple, metrics
+        metrics_tuple = (metrics, eval_metrics)
+        metrics_tuple = nest.map_structure(transpose_batch_time, metrics_tuple)
+        return outputs_tuple, losses_tuple, metrics_tuple
 
     def build_graph(self, inputs, targets=None):
         BaseVideoPredictionModel.build_graph(self, inputs, targets=targets)
 
         global_step = tf.train.get_or_create_global_step()
 
-        outputs_tuple, losses_tuple, metrics = self.tower_fn(self.inputs, self.targets)
-        self.gen_images, self.gen_images_enc, self.outputs = outputs_tuple
+        outputs_tuple, losses_tuple, metrics_tuple = self.tower_fn(self.inputs, self.targets)
+        self.gen_images, self.gen_images_enc, self.outputs, self.eval_outputs = outputs_tuple
         self.d_losses, self.g_losses, g_losses_post = losses_tuple
-        self.metrics = metrics
+        self.metrics, self.eval_metrics = metrics_tuple
         self.d_loss = sum(loss * weight for loss, weight in self.d_losses.values())
         self.g_loss = sum(loss * weight for loss, weight in self.g_losses.values())
         g_loss_post = sum(loss * weight for loss, weight in g_losses_post.values())
@@ -446,9 +514,9 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
         add_scalar_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims == 0})
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
-        add_scalar_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 0})
-        add_plot_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 1},
-                           x_offset=self.context_frames + 1)
+        add_scalar_summaries(self.metrics)
+        add_tensor_summaries(self.eval_outputs, collections=[tf_utils.EVAL_SUMMARIES, tf_utils.IMAGE_SUMMARIES])
+        add_plot_summaries(self.eval_metrics, collections=[tf_utils.EVAL_SUMMARIES])
 
     def generator_loss_fn(self, inputs, outputs, targets):
         hparams = self.hparams
@@ -620,7 +688,7 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
         tower_d_losses = []
         tower_g_losses = []
         tower_g_losses_post = []
-        tower_metrics = []
+        tower_metrics_tuple = []
         tower_d_loss = []
         tower_g_loss = []
         tower_g_loss_post = []
@@ -630,13 +698,13 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
             with tf.variable_scope('', reuse=bool(i > 0)):
                 with tf.name_scope('tower_%d' % i):
                     with tf.device(device_setter):
-                        outputs_tuple, losses_tuple, metrics = self.tower_fn(tower_inputs[i], tower_targets[i])
+                        outputs_tuple, losses_tuple, metrics_tuple = self.tower_fn(tower_inputs[i], tower_targets[i])
                         tower_outputs_tuple.append(outputs_tuple)
                         d_losses, g_losses, g_losses_post = losses_tuple
                         tower_d_losses.append(d_losses)
                         tower_g_losses.append(g_losses)
                         tower_g_losses_post.append(g_losses_post)
-                        tower_metrics.append(metrics)
+                        tower_metrics_tuple.append(metrics_tuple)
                         d_loss = sum(loss * weight for loss, weight in d_losses.values())
                         g_loss = sum(loss * weight for loss, weight in g_losses.values())
                         g_loss_post = sum(loss * weight for loss, weight in g_losses_post.values())
@@ -672,10 +740,10 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
         # Device that runs the ops to apply global gradient updates.
         consolidation_device = '/cpu:0'
         with tf.device(consolidation_device):
-            self.gen_images, self.gen_images_enc, self.outputs = reduce_tensors(tower_outputs_tuple)
+            self.gen_images, self.gen_images_enc, self.outputs, self.eval_outputs = reduce_tensors(tower_outputs_tuple)
             self.d_losses = reduce_tensors(tower_d_losses, shallow=True)
             self.g_losses = reduce_tensors(tower_g_losses, shallow=True)
-            self.metrics = reduce_mean_tensors(tower_metrics)
+            self.metrics, self.eval_metrics = reduce_mean_tensors(tower_metrics_tuple)
             self.d_loss = reduce_tensors(tower_d_loss)
             self.g_loss = reduce_tensors(tower_g_loss)
 
@@ -691,6 +759,6 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
         add_scalar_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 0})
-        add_scalar_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 0})
-        add_plot_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 1},
-                           x_offset=self.hparams.context_frames + 1)
+        add_scalar_summaries(self.metrics)
+        add_tensor_summaries(self.eval_outputs, collections=[tf_utils.EVAL_SUMMARIES, tf_utils.IMAGE_SUMMARIES])
+        add_plot_summaries(self.eval_metrics, collections=[tf_utils.EVAL_SUMMARIES])

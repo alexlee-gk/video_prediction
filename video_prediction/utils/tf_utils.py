@@ -16,6 +16,7 @@ from video_prediction.utils import ffmpeg_gif
 
 
 IMAGE_SUMMARIES = "image_summaries"
+EVAL_SUMMARIES = "eval_summaries"
 
 
 def local_device_setter(num_devices=1,
@@ -157,27 +158,31 @@ def tensor_to_image_batch(tensor):
     return tensor
 
 
-def add_image_summaries(outputs):
+def add_image_summaries(outputs, collections=None):
+    if collections is None:
+        collections = [IMAGE_SUMMARIES]
     for name, output in outputs.items():
         with tf.name_scope("%s_summary" % name):
-            tf.summary.image(name, tensor_to_image_batch(output), collections=[IMAGE_SUMMARIES])
+            tf.summary.image(name, tensor_to_image_batch(output), collections=collections)
 
 
-def add_tensor_summaries(outputs):
+def add_tensor_summaries(outputs, collections=None):
+    if collections is None:
+        collections = [IMAGE_SUMMARIES]
     for name, output in outputs.items():
         with tf.name_scope("%s_summary" % name):
-            tf.summary.tensor_summary(name, tensor_to_clip(output), collections=[IMAGE_SUMMARIES])
+            tf.summary.tensor_summary(name, tensor_to_clip(output), collections=collections)
 
 
-def add_scalar_summaries(losses_or_metrics):
+def add_scalar_summaries(losses_or_metrics, collections=None):
     for name, loss_or_metric in losses_or_metrics.items():
         if isinstance(loss_or_metric, tuple):
             loss_or_metric, _ = loss_or_metric
         with tf.name_scope("%s_summary" % name):
-            tf.summary.scalar(name, loss_or_metric)
+            tf.summary.scalar(name, loss_or_metric, collections=collections)
 
 
-def add_summaries(outputs):
+def add_summaries(outputs, collections=None):
     scalar_outputs = OrderedDict()
     image_outputs = OrderedDict()
     tensor_outputs = OrderedDict()
@@ -188,9 +193,9 @@ def add_summaries(outputs):
             image_outputs[name] = output
         else:
             tensor_outputs[name] = output
-    add_scalar_summaries(scalar_outputs)
-    add_image_summaries(image_outputs)
-    add_tensor_summaries(tensor_outputs)
+    add_scalar_summaries(scalar_outputs, collections=collections)
+    add_image_summaries(image_outputs, collections=collections)
+    add_tensor_summaries(tensor_outputs, collections=collections)
 
 
 def plot_buf(y):
@@ -214,7 +219,9 @@ def plot_buf(y):
     return s
 
 
-def add_plot_image_summaries(metrics):
+def add_plot_image_summaries(metrics, collections=None):
+    if collections is None:
+        collections = [IMAGE_SUMMARIES]
     for name, metric in metrics.items():
         try:
             buf = plot_buf(metric)
@@ -223,10 +230,10 @@ def add_plot_image_summaries(metrics):
         image = tf.image.decode_png(buf, channels=4)
         image = tf.expand_dims(image, axis=0)
         with tf.name_scope("%s_summary" % name):
-            tf.summary.image(name, image, max_outputs=1)
+            tf.summary.image(name, image, max_outputs=1, collections=collections)
 
 
-def plot_summary(name, x, y, display_name=None, description=None):
+def plot_summary(name, x, y, display_name=None, description=None, collections=None):
     """
     Hack that uses pr_curve summaries for 2D plots.
 
@@ -258,14 +265,15 @@ def plot_summary(name, x, y, display_name=None, description=None):
         recall=x[::-1],
         num_thresholds=num_thresholds,
         display_name=display_name,
-        description=description)
+        description=description,
+        collections=collections)
     return summary
 
 
-def add_plot_summaries(metrics, x_offset=0):
+def add_plot_summaries(metrics, x_offset=0, collections=None):
     for name, metric in metrics.items():
         with tf.name_scope("%s_summary" % name):
-            plot_summary(name, x_offset + tf.range(tf.shape(metric)[0]), metric)
+            plot_summary(name, x_offset + tf.range(tf.shape(metric)[0]), metric, collections=collections)
 
 
 def convert_tensor_to_gif_summary(summ):

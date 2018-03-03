@@ -642,6 +642,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             self.encoder_fn = None
         if self.hparams.d_net == 'none':
             self.discriminator_fn = None
+        self.deterministic = not self.hparams.nz
 
     def get_default_hparams_dict(self):
         default_hparams = super(ImprovedDNAVideoPredictionModel, self).get_default_hparams_dict()
