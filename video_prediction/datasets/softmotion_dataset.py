@@ -15,7 +15,7 @@ class SoftmotionVideoDataset(VideoDataset):
     def __init__(self, *args, **kwargs):
         super(SoftmotionVideoDataset, self).__init__(*args, **kwargs)
         if 'softmotion30_44k' in self.input_dir.split('/'):
-            self.state_like_names_and_shapes['images'] = '%d/image_main/encoded', None
+            self.state_like_names_and_shapes['images'] = '%d/image_aux1/encoded', None
         else:
             self.state_like_names_and_shapes['images'] = '%d/image_view0/encoded', None
         if self.hparams.use_state:
