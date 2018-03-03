@@ -172,7 +172,7 @@ def structural_similarity(true, pred, k1=0.01, k2=0.03, kernel_size=7,
         true = tf.reshape(true, tf.concat([[-1], shape[-4:]], axis=0))
         pred = tf.reshape(pred, tf.concat([[-1], shape[-4:]], axis=0))
         ssim = tf.map_fn(lambda args: _structural_similarity(*args),
-                         (true, pred), dtype=true.dtype)
+                         (true, pred), dtype=true.dtype, parallel_iterations=1)
         ssim = tf.reshape(ssim, shape[:-3])
     else:
         raise ValueError

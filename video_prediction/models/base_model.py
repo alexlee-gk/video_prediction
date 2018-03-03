@@ -119,15 +119,16 @@ class BaseVideoPredictionModel:
             ('ssim', vp.metrics.structural_similarity),
             ('vgg_cdist', vp.metrics.vgg_cosine_distance),
         ]
+        eval_outputs['eval_images'] = targets
         if self.deterministic:
             target_images = targets
             gen_images = outputs['gen_images']
             for metric_name, metric_fn in metric_fns:
                 metric = metric_fn(target_images, gen_images, keep_axis=0)
-                eval_metrics['%s_min' % metric_name] = metric
-                eval_metrics['%s_avg' % metric_name] = metric
-                eval_metrics['%s_max' % metric_name] = metric
-            eval_outputs['gen_images_det'] = gen_images
+                eval_metrics['eval_%s/min' % metric_name] = metric
+                eval_metrics['eval_%s/avg' % metric_name] = metric
+                eval_metrics['eval_%s/max' % metric_name] = metric
+            eval_outputs['eval_gen_images'] = gen_images
         else:
             def where_axis1(cond, x, y):
                 return transpose_batch_time(tf.where(cond, transpose_batch_time(x), transpose_batch_time(y)))
@@ -137,35 +138,35 @@ class BaseVideoPredictionModel:
                     gen_images, _ = self.generator_fn(inputs)
                 for name, metric_fn in metric_fns:
                     metric = metric_fn(targets, gen_images, keep_axis=(0, 1))  # time, batch_size
-                    cond_min = tf.less(tf.reduce_mean(metric, axis=0), tf.reduce_mean(a['%s_min' % name], axis=0))
-                    cond_max = tf.greater(tf.reduce_mean(metric, axis=0), tf.reduce_mean(a['%s_max' % name], axis=0))
-                    a['%s_min' % name] = where_axis1(cond_min, metric, a['%s_min' % name])
-                    a['%s_sum' % name] = metric + a['%s_sum' % name]
-                    a['%s_max' % name] = where_axis1(cond_max, metric, a['%s_max' % name])
-                    a['gen_images_%s_min' % name] = where_axis1(cond_min, gen_images, a['gen_images_%s_min' % name])
-                    a['gen_images_%s_sum' % name] = gen_images + a['gen_images_%s_sum' % name]
-                    a['gen_images_%s_max' % name] = where_axis1(cond_max, gen_images, a['gen_images_%s_max' % name])
+                    cond_min = tf.less(tf.reduce_mean(metric, axis=0), tf.reduce_mean(a['eval_%s/min' % name], axis=0))
+                    cond_max = tf.greater(tf.reduce_mean(metric, axis=0), tf.reduce_mean(a['eval_%s/max' % name], axis=0))
+                    a['eval_%s/min' % name] = where_axis1(cond_min, metric, a['eval_%s/min' % name])
+                    a['eval_%s/sum' % name] = metric + a['eval_%s/sum' % name]
+                    a['eval_%s/max' % name] = where_axis1(cond_max, metric, a['eval_%s/max' % name])
+                    a['eval_gen_images_%s/min' % name] = where_axis1(cond_min, gen_images, a['eval_gen_images_%s/min' % name])
+                    a['eval_gen_images_%s/sum' % name] = gen_images + a['eval_gen_images_%s/sum' % name]
+                    a['eval_gen_images_%s/max' % name] = where_axis1(cond_max, gen_images, a['eval_gen_images_%s/max' % name])
                 return a
 
             initializer = {}
             for name, _ in metric_fns:
-                initializer['gen_images_%s_min' % name] = tf.zeros_like(targets)
-                initializer['gen_images_%s_sum' % name] = tf.zeros_like(targets)
-                initializer['gen_images_%s_max' % name] = tf.zeros_like(targets)
-                initializer['%s_min' % name] = tf.fill(targets.shape[:2], float('inf'))
-                initializer['%s_sum' % name] = tf.zeros(targets.shape[:2])
-                initializer['%s_max' % name] = tf.fill(targets.shape[:2], float('-inf'))
+                initializer['eval_gen_images_%s/min' % name] = tf.zeros_like(targets)
+                initializer['eval_gen_images_%s/sum' % name] = tf.zeros_like(targets)
+                initializer['eval_gen_images_%s/max' % name] = tf.zeros_like(targets)
+                initializer['eval_%s/min' % name] = tf.fill(targets.shape[:2], float('inf'))
+                initializer['eval_%s/sum' % name] = tf.zeros(targets.shape[:2])
+                initializer['eval_%s/max' % name] = tf.fill(targets.shape[:2], float('-inf'))
 
             eval_outputs_and_metrics = foldl(accum_gen_images_and_metrics_fn, tf.zeros([num_samples, 0]),
                                              initializer=initializer, back_prop=False, parallel_iterations=1)
 
             for name, _ in metric_fns:
-                eval_outputs['gen_images_%s_min' % name] = eval_outputs_and_metrics['gen_images_%s_min' % name]
-                eval_outputs['gen_images_%s_avg' % name] = eval_outputs_and_metrics['gen_images_%s_sum' % name] / float(num_samples)
-                eval_outputs['gen_images_%s_max' % name] = eval_outputs_and_metrics['gen_images_%s_min' % name]
-                eval_metrics['%s_min' % name] = tf.reduce_mean(eval_outputs_and_metrics['%s_min' % name], axis=1)
-                eval_metrics['%s_avg' % name] = tf.reduce_mean(eval_outputs_and_metrics['%s_sum' % name], axis=1) / float(num_samples)
-                eval_metrics['%s_max' % name] = tf.reduce_mean(eval_outputs_and_metrics['%s_max' % name], axis=1)
+                eval_outputs['eval_gen_images_%s/min' % name] = eval_outputs_and_metrics['eval_gen_images_%s/min' % name]
+                eval_outputs['eval_gen_images_%s/avg' % name] = eval_outputs_and_metrics['eval_gen_images_%s/sum' % name] / float(num_samples)
+                eval_outputs['eval_gen_images_%s/max' % name] = eval_outputs_and_metrics['eval_gen_images_%s/min' % name]
+                eval_metrics['eval_%s/min' % name] = tf.reduce_mean(eval_outputs_and_metrics['eval_%s/min' % name], axis=1)
+                eval_metrics['eval_%s/avg' % name] = tf.reduce_mean(eval_outputs_and_metrics['eval_%s/sum' % name], axis=1) / float(num_samples)
+                eval_metrics['eval_%s/max' % name] = tf.reduce_mean(eval_outputs_and_metrics['eval_%s/max' % name], axis=1)
         return eval_outputs, eval_metrics
 
     def restore(self, sess, checkpoints):
@@ -516,7 +517,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
         add_scalar_summaries(self.g_losses)
         add_scalar_summaries(self.metrics)
         add_tensor_summaries(self.eval_outputs, collections=[tf_utils.EVAL_SUMMARIES, tf_utils.IMAGE_SUMMARIES])
-        add_plot_summaries(self.eval_metrics, collections=[tf_utils.EVAL_SUMMARIES])
+        add_plot_summaries(self.eval_metrics, x_offset=self.hparams.context_frames + 1, collections=[tf_utils.EVAL_SUMMARIES])
 
     def generator_loss_fn(self, inputs, outputs, targets):
         hparams = self.hparams
@@ -758,7 +759,6 @@ class VideoPredictionModel(SoftPlacementVideoPredictionModel):
         add_scalar_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims == 0})
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
-        add_scalar_summaries({name: tensor for name, tensor in self.metrics.items() if tensor.shape.ndims == 0})
         add_scalar_summaries(self.metrics)
         add_tensor_summaries(self.eval_outputs, collections=[tf_utils.EVAL_SUMMARIES, tf_utils.IMAGE_SUMMARIES])
-        add_plot_summaries(self.eval_metrics, collections=[tf_utils.EVAL_SUMMARIES])
+        add_plot_summaries(self.eval_metrics, x_offset=self.hparams.context_frames + 1, collections=[tf_utils.EVAL_SUMMARIES])
