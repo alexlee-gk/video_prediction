@@ -650,7 +650,7 @@ def upsample_conv2d(inputs, filters, kernel_size, strides=(1, 1), padding='SAME'
     Example:
         >>> import numpy as np
         >>> import tensorflow as tf
-        >>> from docile.ops import upsample_conv2d, upsample2d, conv2d, pad2d_paddings
+        >>> from video_prediction.ops import upsample_conv2d, upsample2d, conv2d, pad2d_paddings
         >>> inputs_shape = [4, 8, 8, 64]
         >>> kernel_size = [3, 3]  # for convolution
         >>> filters = 32  # for convolution
@@ -796,7 +796,7 @@ def conv_pool2d(inputs, filters, kernel_size, strides=(1, 1), padding='SAME', ke
     Example:
         >>> import numpy as np
         >>> import tensorflow as tf
-        >>> from docile.ops import conv_pool2d, conv2d, pool2d
+        >>> from video_prediction.ops import conv_pool2d, conv2d, pool2d
         >>> inputs_shape = [4, 16, 16, 32]
         >>> kernel_size = [3, 3]  # for convolution
         >>> filters = 64  # for convolution
