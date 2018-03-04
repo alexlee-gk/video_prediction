@@ -8,13 +8,13 @@ def vgg_assign_from_values_fn(model='vgg16',
                               var_name_bias_postfix='/bias:0'):
     if model not in ('vgg16', 'vgg19'):
         raise ValueError('Invalid model %s' % model)
-    from keras.utils.data_utils import get_file
     import h5py
     WEIGHTS_PATH_NO_TOP = 'https://github.com/fchollet/deep-learning-models/releases/download/v0.1/' \
                           '%s_weights_tf_dim_ordering_tf_kernels_notop.h5' % model
-    weights_path = get_file('%s_weights_tf_dim_ordering_tf_kernels_notop.h5' % model,
-                            WEIGHTS_PATH_NO_TOP,
-                            cache_subdir='models')
+    weights_path = tf.keras.utils.get_file(
+        '%s_weights_tf_dim_ordering_tf_kernels_notop.h5' % model,
+        WEIGHTS_PATH_NO_TOP,
+        cache_subdir='models')
     weights_file = h5py.File(weights_path, 'r')
 
     num_blocks = 5

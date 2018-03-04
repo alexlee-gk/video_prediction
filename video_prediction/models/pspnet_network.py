@@ -1,8 +1,6 @@
 from math import ceil
 
-import h5py
 import tensorflow as tf
-from keras.utils.data_utils import get_file
 
 
 def residual_conv(prev, level, pad=1, lvl=1, sub_lvl=1, modify_stride=False):
@@ -229,9 +227,11 @@ def pspnet(inputs, resnet_layers=50, nb_classes=150, include_top=False):
 
 
 def pspnet50_assign_from_values_fn(var_name_prefix='generator/', include_top=False):
-    weights_path = get_file('pspnet50_ade20k.h5',
-                            'https://www.dropbox.com/s/0uxn14y26jcui4v/pspnet50_ade20k.h5?dl=1',
-                            cache_subdir='weights')
+    import h5py
+    weights_path = tf.keras.utils.get_file(
+        'pspnet50_ade20k.h5',
+        'https://www.dropbox.com/s/0uxn14y26jcui4v/pspnet50_ade20k.h5?dl=1',
+        cache_subdir='weights')
     f = h5py.File(weights_path, 'r')
     var_names_to_values = {}
     layer_names = [n.decode('utf8') for n in f.attrs['layer_names']]
