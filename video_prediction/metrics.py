@@ -30,12 +30,12 @@ def mean_squared_error_np(true, pred, keep_axis=None):
     return np.mean(np.square(error), axis=_axis(keep_axis, error.ndim))
 
 
-def structural_similarity_np(true, pred, k1=0.01, k2=0.03, kernel_size=7,
+def structural_similarity_np(true, pred, K1=0.01, K2=0.03, win_size=7,
                              data_range=1.0, use_sample_covariance=True,
                              keep_axis=None):
     from skimage.measure import compare_ssim
-    kwargs = dict(K1=k1, K2=k2,
-                  win_size=kernel_size,
+    kwargs = dict(K1=K1, K2=K2,
+                  win_size=win_size,
                   data_range=data_range,
                   multichannel=True,
                   use_sample_covariance=use_sample_covariance)
@@ -102,80 +102,77 @@ def mean_squared_error(true, pred, keep_axis=None):
     return tf.reduce_mean(tf.square(error), axis=_axis(keep_axis, error.shape.ndims))
 
 
-def structural_similarity(true, pred, k1=0.01, k2=0.03, kernel_size=7,
+def _with_flat_batch(flat_batch_fn):
+    def fn(x, *args, **kwargs):
+        shape = tf.shape(x)
+        flat_batch_x = tf.reshape(x, tf.concat([[-1], shape[-3:]], axis=0))
+        flat_batch_r = flat_batch_fn(flat_batch_x, *args, **kwargs)
+        r = tf.reshape(flat_batch_r, tf.concat([shape[:-3], flat_batch_r.shape[1:]], axis=0))
+        return r
+    return fn
+
+
+def structural_similarity(X, Y, K1=0.01, K2=0.03, win_size=7,
                           data_range=1.0, use_sample_covariance=True,
                           keep_axis=None):
     """
     Structural SIMilarity (SSIM) index between two images
 
     Args:
-        true: the ground truth image.
-        pred: the predicted image.
+        X: A tensor of shape `[..., in_height, in_width, in_channels]`.
+        Y: A tensor of shape `[..., in_height, in_width, in_channels]`.
         keep_axis: None or int or iterable of ints (all non-negative).
 
     Returns:
-        The SSIM between ground truth and predicted image.
+        The SSIM between images X and Y.
 
     Reference:
         https://github.com/scikit-image/scikit-image/blob/master/skimage/measure/_structural_similarity.py
+
+    Broadcasting is supported.
     """
-    def _structural_similarity(true, pred):
-        assert true.shape.ndims == 4
-        assert pred.shape.ndims == 4
-        channels = pred.get_shape().as_list()[-1]
-        c1 = (k1 * data_range) ** 2
-        c2 = (k2 * data_range) ** 2
-        # compute patches independently per channel as in the reference implementation
-        patches_true = []
-        patches_pred = []
-        for true_single_channel, pred_single_channel in zip(tf.split(true, channels, axis=-1),
-                                                            tf.split(pred, channels, axis=-1)):
-            # use no padding (i.e. valid padding) so we don't compute values near the borders
-            patches_true_single_channel = \
-                tf.extract_image_patches(true_single_channel, [1] + [kernel_size] * 2 + [1],
-                                         strides=[1] * 4, rates=[1] * 4, padding="VALID")
-            patches_pred_single_channel = \
-                tf.extract_image_patches(pred_single_channel, [1] + [kernel_size] * 2 + [1],
-                                         strides=[1] * 4, rates=[1] * 4, padding="VALID")
-            patches_true.append(patches_true_single_channel)
-            patches_pred.append(patches_pred_single_channel)
-        patches_true = tf.stack(patches_true, axis=-2)
-        patches_pred = tf.stack(patches_pred, axis=-2)
+    X = tf.convert_to_tensor(X)
+    Y = tf.convert_to_tensor(Y)
 
-        mean_true, var_true = tf.nn.moments(patches_true, axes=[-1])
-        mean_pred, var_pred = tf.nn.moments(patches_pred, axes=[-1])
-        cov_true_pred = tf.reduce_mean(patches_true * patches_pred, axis=-1) - mean_true * mean_pred
+    ndim = 2  # number of spatial dimensions
+    nch = tf.shape(X)[-1]
 
-        if use_sample_covariance:
-            NP = kernel_size ** 2  # 2 spatial dimensions
-            cov_norm = NP / (NP - 1)  # sample covariance
-        else:
-            cov_norm = 1.0  # population covariance to match Wang et. al. 2004
-        var_true *= cov_norm
-        var_pred *= cov_norm
-        cov_true_pred *= cov_norm
+    filter_func = _with_flat_batch(tf.nn.depthwise_conv2d)
+    kernel = tf.cast(tf.fill([win_size, win_size, nch, 1], 1 / win_size ** 2), X.dtype)
+    filter_args = {'filter': kernel, 'strides': [1] * 4, 'padding': 'VALID'}
 
-        ssim = (2 * mean_true * mean_pred + c1) * (2 * cov_true_pred + c2)
-        denom = (tf.square(mean_true) + tf.square(mean_pred) + c1) * (var_pred + var_true + c2)
-        ssim /= denom
-        return tf.reduce_mean(ssim, axis=(1, 2, 3))
+    NP = win_size ** ndim
 
-    true = tf.convert_to_tensor(true)
-    pred = tf.convert_to_tensor(pred)
-    shape = true.shape
-    if shape.ndims == 3:
-        ssim = tf.squeeze(_structural_similarity(
-            tf.expand_dims(true, 0), tf.expand_dims(pred, 0)), 0)
-    elif shape.ndims == 4:
-        ssim = _structural_similarity(true, pred)
-    elif shape.ndims > 4:
-        true = tf.reshape(true, tf.concat([[-1], shape[-4:]], axis=0))
-        pred = tf.reshape(pred, tf.concat([[-1], shape[-4:]], axis=0))
-        ssim = tf.map_fn(lambda args: _structural_similarity(*args),
-                         (true, pred), dtype=true.dtype, parallel_iterations=1)
-        ssim = tf.reshape(ssim, shape[:-3])
+    # filter has already normalized by NP
+    if use_sample_covariance:
+        cov_norm = NP / (NP - 1)  # sample covariance
     else:
-        raise ValueError
+        cov_norm = 1.0  # population covariance to match Wang et. al. 2004
+
+    # compute means
+    ux = filter_func(X, **filter_args)
+    uy = filter_func(Y, **filter_args)
+
+    # compute variances and covariances
+    uxx = filter_func(X * X, **filter_args)
+    uyy = filter_func(Y * Y, **filter_args)
+    uxy = filter_func(X * Y, **filter_args)
+    vx = cov_norm * (uxx - ux * ux)
+    vy = cov_norm * (uyy - uy * uy)
+    vxy = cov_norm * (uxy - ux * uy)
+
+    R = data_range
+    C1 = (K1 * R) ** 2
+    C2 = (K2 * R) ** 2
+
+    A1, A2, B1, B2 = ((2 * ux * uy + C1,
+                       2 * vxy + C2,
+                       ux ** 2 + uy ** 2 + C1,
+                       vx + vy + C2))
+    D = B1 * B2
+    S = (A1 * A2) / D
+
+    ssim = tf.reduce_mean(S, axis=[-3, -2, -1])
     return tf.reduce_mean(ssim, axis=_axis(keep_axis, ssim.shape.ndims))
 
 
@@ -277,12 +274,27 @@ def test_ssim():
     pred = np.random.random((batch_size,) + image_shape)
 
     sess = tf.Session()
-    ssim_tf = structural_similarity(tf.constant(true), tf.constant(pred))
+    ssim_tf = structural_similarity(true, pred)
     ssim_tf = sess.run(ssim_tf)
     ssim_np = structural_similarity_np(true, pred)
     ssim = np.mean([compare_ssim(true_y, pred_y, data_range=1.0, multichannel=True)
                     for true_y, pred_y in zip(true, pred)])
     print(ssim_tf, ssim_np, ssim)
+
+
+def test_ssim_broadcasting():
+    import numpy as np
+
+    batch_size = 4
+    image_shape = (64, 64, 3)
+    true = np.random.random((batch_size,) + image_shape)
+    pred = np.random.random((10, batch_size,) + image_shape)
+
+    sess = tf.Session()
+    ssim_tf = structural_similarity(true, pred)
+    ssim_tf = sess.run(ssim_tf)
+    ssim_np = np.mean([structural_similarity_np(true, pred_) for pred_ in pred])
+    print(ssim_tf, ssim_np)
 
 
 def test_metrics_equivalence():
@@ -306,7 +318,7 @@ def test_metrics_equivalence():
         for metric, metric_np in zip(metrics, metrics_np):
             m = metric(a, b, keep_axis=keep_axis)
             m_np = metric_np(a, b, keep_axis=keep_axis)
-            assert np.allclose(sess.run(m), m_np)
+            assert np.allclose(sess.run(m), m_np, atol=1e-7)
 
         m = vgg_cosine_distance(a, b, keep_axis=keep_axis)
         m_np = vgg_cosine_distance_np(a, b, keep_axis=keep_axis, sess=sess)
@@ -316,4 +328,5 @@ def test_metrics_equivalence():
 
 if __name__ == '__main__':
     test_ssim()
+    test_ssim_broadcasting()
     test_metrics_equivalence()
