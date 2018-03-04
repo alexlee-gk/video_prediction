@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.util import nest
 
 from video_prediction.models import vgg_network
 
@@ -107,7 +108,8 @@ def _with_flat_batch(flat_batch_fn):
         shape = tf.shape(x)
         flat_batch_x = tf.reshape(x, tf.concat([[-1], shape[-3:]], axis=0))
         flat_batch_r = flat_batch_fn(flat_batch_x, *args, **kwargs)
-        r = tf.reshape(flat_batch_r, tf.concat([shape[:-3], flat_batch_r.shape[1:]], axis=0))
+        r = nest.map_structure(lambda x: tf.reshape(x, tf.concat([shape[:-3], x.shape[1:]], axis=0)),
+                               flat_batch_r)
         return r
     return fn
 
@@ -199,35 +201,18 @@ def cosine_distance(tensor0, tensor1, keep_axis=None):
 
 
 def vgg_cosine_distance(image0, image1, keep_axis=None):
-    def _vgg_cosine_distance(image0, image1):
-        assert image0.shape.ndims == 4
-        assert image1.shape.ndims == 4
-        with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
-            _, features0 = vgg_network.vgg16(image0)
-        with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
-            _, features1 = vgg_network.vgg16(image1)
-        cdist = 0.0
-        for feature0, feature1 in zip(features0, features1):
-            cdist += cosine_distance(feature0, feature1, keep_axis=0)
-        return cdist
-
     image0 = tf.convert_to_tensor(image0, dtype=tf.float32)
     image1 = tf.convert_to_tensor(image1, dtype=tf.float32)
-    shape = image0.shape
-    if shape.ndims == 3:
-        cdist = tf.squeeze(_vgg_cosine_distance(
-            tf.expand_dims(image0, 0), tf.expand_dims(image1, 0)), 0)
-    elif shape.ndims == 4:
-        cdist = _vgg_cosine_distance(image0, image1)
-    elif shape.ndims > 4:
-        image0 = tf.reshape(image0, tf.concat([[-1], shape[-4:]], axis=0))
-        image1 = tf.reshape(image1, tf.concat([[-1], shape[-4:]], axis=0))
-        cdist = tf.map_fn(lambda args: _vgg_cosine_distance(*args),
-                          (image0, image1), dtype=image0.dtype)
-        cdist = tf.reshape(cdist, shape[:-3])
-    else:
-        raise ValueError
-    return tf.reduce_mean(cdist, axis=_axis(keep_axis, cdist.shape.ndims))
+
+    with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
+        _, features0 = _with_flat_batch(vgg_network.vgg16)(image0)
+    with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
+        _, features1 = _with_flat_batch(vgg_network.vgg16)(image1)
+
+    cdist = 0.0
+    for feature0, feature1 in zip(features0, features1):
+        cdist += cosine_distance(feature0, feature1, keep_axis=keep_axis)
+    return cdist
 
 
 def normalize_tensor_np(tensor, eps=1e-10):
