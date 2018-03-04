@@ -4,6 +4,7 @@ from .google_robot_dataset import GoogleRobotVideoDataset
 from .sv2_dataset import SV2PVideoDataset
 from .softmotion_dataset import SoftmotionVideoDataset
 from .kth_dataset import KTHVideoDataset
+from .ucf101_dataset import UCF101VideoDataset
 
 
 def get_dataset_class(dataset):
@@ -12,6 +13,7 @@ def get_dataset_class(dataset):
         'sv2p': 'SV2PVideoDataset',
         'softmotion': 'SoftmotionVideoDataset',
         'kth': 'KTHVideoDataset',
+        'ucf101': 'UCF101VideoDataset'
     }
     dataset_class = dataset_mappings.get(dataset, dataset)
     dataset_class = globals().get(dataset_class)
