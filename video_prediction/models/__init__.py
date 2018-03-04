@@ -1,5 +1,5 @@
 from .base_model import BaseVideoPredictionModel
-from .base_model import SoftPlacementVideoPredictionModel, VideoPredictionModel
+from .base_model import VideoPredictionModel
 from .non_trainable_model import NonTrainableVideoPredictionModel
 from .non_trainable_model import GroundTruthVideoPredictionModel, RepeatVideoPredictionModel
 from .pix2pix_model import Pix2PixVideoPredictionModel

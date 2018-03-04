@@ -17,7 +17,7 @@ from . import vgg_network
 
 
 class BaseVideoPredictionModel:
-    def __init__(self, mode='train', hparams_dict=None, hparams=None):
+    def __init__(self, mode='train', num_gpus=1, hparams_dict=None, hparams=None):
         """
         Base video prediction model.
 
@@ -32,6 +32,7 @@ class BaseVideoPredictionModel:
                 These values overrides any values in hparams_dict (if any).
         """
         self.mode = mode
+        self.num_gpus = num_gpus
         self.hparams = self.parse_hparams(hparams_dict, hparams)
         if not self.hparams.context_frames:
             raise ValueError('Invalid context_frames %r. It might have to be '
@@ -186,7 +187,7 @@ class BaseVideoPredictionModel:
             sess.run(restore_op)
 
 
-class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
+class VideoPredictionModel(BaseVideoPredictionModel):
     def __init__(self,
                  generator_fn,
                  discriminator_fn=None,
@@ -196,13 +197,15 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
                  encoder_scope='encoder',
                  discriminator_encoder_scope='discriminator_encoder',
                  mode='train',
+                 num_gpus=1,
                  hparams_dict=None,
                  hparams=None):
         """
-        Trainable video prediction model with automatic device placement.
+        Trainable video prediction model with CPU and multi-GPU support.
 
-        The devices for the ops in `self.build_graph` are automatically chosen
-        by TensorFlow, i.e. `tf.device` is not specified.
+        If num_gpus <= 1, the devices for the ops in `self.build_graph` are
+        automatically chosen by TensorFlow (i.e. `tf.device` is not specified),
+        otherwise they are explicitly chosen.
 
         Args:
             generator_fn: callable that takes in inputs (and optionally
@@ -219,7 +222,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
                 where `name` must be defined in `self.get_default_hparams()`.
                 These values overrides any values in hparams_dict (if any).
         """
-        super(SoftPlacementVideoPredictionModel, self).__init__(mode, hparams_dict, hparams)
+        super(VideoPredictionModel, self).__init__(mode, num_gpus, hparams_dict, hparams)
 
         self.generator_fn = functools.partial(generator_fn, hparams=self.hparams)
         self.encoder_fn = functools.partial(encoder_fn, hparams=self.hparams) if encoder_fn else None
@@ -296,7 +299,7 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
             beta1: momentum term of Adam.
             beta2: momentum term of Adam.
         """
-        default_hparams = super(SoftPlacementVideoPredictionModel, self).get_default_hparams_dict()
+        default_hparams = super(VideoPredictionModel, self).get_default_hparams_dict()
         hparams = dict(
             batch_size=16,
             context_frames=0,
@@ -471,38 +474,116 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
 
         global_step = tf.train.get_or_create_global_step()
 
-        outputs_tuple, losses_tuple, metrics_tuple = self.tower_fn(self.inputs, self.targets)
-        self.gen_images, self.gen_images_enc, self.outputs, self.eval_outputs = outputs_tuple
-        self.d_losses, self.g_losses, g_losses_post = losses_tuple
-        self.metrics, self.eval_metrics = metrics_tuple
-        self.d_loss = sum(loss * weight for loss, weight in self.d_losses.values())
-        self.g_loss = sum(loss * weight for loss, weight in self.g_losses.values())
-        g_loss_post = sum(loss * weight for loss, weight in g_losses_post.values())
+        if self.num_gpus <= 1:
+            outputs_tuple, losses_tuple, metrics_tuple = self.tower_fn(self.inputs, self.targets)
+            self.gen_images, self.gen_images_enc, self.outputs, self.eval_outputs = outputs_tuple
+            self.d_losses, self.g_losses, g_losses_post = losses_tuple
+            self.metrics, self.eval_metrics = metrics_tuple
+            self.d_loss = sum(loss * weight for loss, weight in self.d_losses.values())
+            self.g_loss = sum(loss * weight for loss, weight in self.g_losses.values())
+            g_loss_post = sum(loss * weight for loss, weight in g_losses_post.values())
 
-        d_vars = tf.trainable_variables(self.discriminator_scope)
-        de_vars = tf.trainable_variables(self.discriminator_encoder_scope)
-        self.d_vars = d_vars + [de_var for de_var in de_vars if de_var not in d_vars]
-        self.g_vars = tf.trainable_variables(self.generator_scope)
+            d_vars = tf.trainable_variables(self.discriminator_scope)
+            de_vars = tf.trainable_variables(self.discriminator_encoder_scope)
+            self.d_vars = d_vars + [de_var for de_var in de_vars if de_var not in d_vars]
+            self.g_vars = tf.trainable_variables(self.generator_scope)
 
-        if self.mode == 'train' and (self.d_losses or self.g_losses):
-            with tf.name_scope('optimize'):
-                with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-                    if self.d_losses:
-                        d_gradvars = self.d_optimizer.compute_gradients(self.d_loss, var_list=self.d_vars)
-                        d_train_op = self.d_optimizer.apply_gradients(d_gradvars)
-                    else:
-                        d_train_op = tf.no_op()
-                with tf.control_dependencies([d_train_op]):
-                    if g_losses_post:
-                        replace_read_ops(g_loss_post, self.d_vars)
-                        g_gradvars = self.g_optimizer.compute_gradients(g_loss_post, var_list=self.g_vars)
-                        g_train_op = self.g_optimizer.apply_gradients(
-                            g_gradvars, global_step=global_step)  # also increments global_step
-                    else:
-                        g_train_op = tf.assign_add(global_step, 1)
-            self.train_op = g_train_op
+            if self.mode == 'train' and (self.d_losses or self.g_losses):
+                with tf.name_scope('optimize'):
+                    with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                        if self.d_losses:
+                            d_gradvars = self.d_optimizer.compute_gradients(self.d_loss, var_list=self.d_vars)
+                            d_train_op = self.d_optimizer.apply_gradients(d_gradvars)
+                        else:
+                            d_train_op = tf.no_op()
+                    with tf.control_dependencies([d_train_op]):
+                        if g_losses_post:
+                            replace_read_ops(g_loss_post, self.d_vars)
+                            g_gradvars = self.g_optimizer.compute_gradients(g_loss_post, var_list=self.g_vars)
+                            g_train_op = self.g_optimizer.apply_gradients(
+                                g_gradvars, global_step=global_step)  # also increments global_step
+                        else:
+                            g_train_op = tf.assign_add(global_step, 1)
+                self.train_op = g_train_op
+            else:
+                self.train_op = None
         else:
-            self.train_op = None
+            tower_inputs = [OrderedDict() for _ in range(self.num_gpus)]
+            for name, input in self.inputs.items():
+                input_splits = tf.split(input, self.num_gpus)  # assumes batch_size is divisible by num_gpus
+                for i in range(self.num_gpus):
+                    tower_inputs[i][name] = input_splits[i]
+            if targets is not None:
+                tower_targets = tf.split(targets, self.num_gpus)
+            else:
+                tower_targets = [None] * self.num_gpus
+
+            tower_outputs_tuple = []
+            tower_d_losses = []
+            tower_g_losses = []
+            tower_g_losses_post = []
+            tower_metrics_tuple = []
+            tower_d_loss = []
+            tower_g_loss = []
+            tower_g_loss_post = []
+            for i in range(self.num_gpus):
+                worker_device = '/{}:{}'.format('gpu', i)
+                device_setter = local_device_setter(worker_device=worker_device)
+                with tf.variable_scope('', reuse=bool(i > 0)):
+                    with tf.name_scope('tower_%d' % i):
+                        with tf.device(device_setter):
+                            outputs_tuple, losses_tuple, metrics_tuple = self.tower_fn(tower_inputs[i],
+                                                                                       tower_targets[i])
+                            tower_outputs_tuple.append(outputs_tuple)
+                            d_losses, g_losses, g_losses_post = losses_tuple
+                            tower_d_losses.append(d_losses)
+                            tower_g_losses.append(g_losses)
+                            tower_g_losses_post.append(g_losses_post)
+                            tower_metrics_tuple.append(metrics_tuple)
+                            d_loss = sum(loss * weight for loss, weight in d_losses.values())
+                            g_loss = sum(loss * weight for loss, weight in g_losses.values())
+                            g_loss_post = sum(loss * weight for loss, weight in g_losses_post.values())
+                            tower_d_loss.append(d_loss)
+                            tower_g_loss.append(g_loss)
+                            tower_g_loss_post.append(g_loss_post)
+
+            d_vars = tf.trainable_variables(self.discriminator_scope)
+            de_vars = tf.trainable_variables(self.discriminator_encoder_scope)
+            self.d_vars = d_vars + [de_var for de_var in de_vars if de_var not in d_vars]
+            self.g_vars = tf.trainable_variables(self.generator_scope)
+
+            if self.mode == 'train' and (any(tower_d_losses) or any(tower_g_losses)):
+                with tf.name_scope('optimize'):
+                    with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                        if any(tower_d_losses):
+                            d_gradvars = compute_averaged_gradients(self.d_optimizer, tower_d_loss,
+                                                                    var_list=self.d_vars)
+                            d_train_op = self.d_optimizer.apply_gradients(d_gradvars)
+                        else:
+                            d_train_op = tf.no_op()
+                    with tf.control_dependencies([d_train_op]):
+                        if any(tower_g_losses_post):
+                            replace_read_ops(tower_g_loss_post, self.d_vars)
+                            g_gradvars = compute_averaged_gradients(self.g_optimizer, tower_g_loss_post,
+                                                                    var_list=self.g_vars)
+                            g_train_op = self.g_optimizer.apply_gradients(
+                                g_gradvars, global_step=global_step)  # also increments global_step
+                        else:
+                            g_train_op = tf.assign_add(global_step, 1)
+                self.train_op = g_train_op
+            else:
+                self.train_op = None
+
+            # Device that runs the ops to apply global gradient updates.
+            consolidation_device = '/cpu:0'
+            with tf.device(consolidation_device):
+                self.gen_images, self.gen_images_enc, self.outputs, self.eval_outputs = reduce_tensors(
+                    tower_outputs_tuple)
+                self.d_losses = reduce_tensors(tower_d_losses, shallow=True)
+                self.g_losses = reduce_tensors(tower_g_losses, shallow=True)
+                self.metrics, self.eval_metrics = reduce_mean_tensors(tower_metrics_tuple)
+                self.d_loss = reduce_tensors(tower_d_loss)
+                self.g_loss = reduce_tensors(tower_g_loss)
 
         add_summaries({name: tensor for name, tensor in self.inputs.items()
                        if tensor.shape.ndims == 4 or (tensor.shape.ndims > 4 and
@@ -654,111 +735,3 @@ class SoftPlacementVideoPredictionModel(BaseVideoPredictionModel):
                 discrim_vae_gan_loss = discrim_vae_gan_loss_real + discrim_vae_gan_loss_fake
                 discrim_losses["discrim%s_vae_gan_loss" % infix] = (discrim_vae_gan_loss, vae_gan_weight)
         return discrim_losses
-
-
-class VideoPredictionModel(SoftPlacementVideoPredictionModel):
-    def __init__(self, *args, **kwargs):
-        """
-        Trainable video prediction model with multi-GPU device placement.
-        """
-        super(VideoPredictionModel, self).__init__(*args, **kwargs)
-
-    def get_default_hparams_dict(self):
-        default_hparams = super(VideoPredictionModel, self).get_default_hparams_dict()
-        hparams = dict(
-            num_gpus=1,
-        )
-        return dict(itertools.chain(default_hparams.items(), hparams.items()))
-
-    def build_graph(self, inputs, targets=None):
-        BaseVideoPredictionModel.build_graph(self, inputs, targets=targets)
-
-        global_step = tf.train.get_or_create_global_step()
-
-        tower_inputs = [OrderedDict() for _ in range(self.hparams.num_gpus)]
-        for name, input in self.inputs.items():
-            input_splits = tf.split(input, self.hparams.num_gpus)  # assumes batch_size is divisible by num_gpus
-            for i in range(self.hparams.num_gpus):
-                tower_inputs[i][name] = input_splits[i]
-        if targets is not None:
-            tower_targets = tf.split(targets, self.hparams.num_gpus)
-        else:
-            tower_targets = [None] * self.hparams.num_gpus
-
-        tower_outputs_tuple = []
-        tower_d_losses = []
-        tower_g_losses = []
-        tower_g_losses_post = []
-        tower_metrics_tuple = []
-        tower_d_loss = []
-        tower_g_loss = []
-        tower_g_loss_post = []
-        for i in range(self.hparams.num_gpus):
-            worker_device = '/{}:{}'.format('gpu', i)
-            device_setter = local_device_setter(worker_device=worker_device)
-            with tf.variable_scope('', reuse=bool(i > 0)):
-                with tf.name_scope('tower_%d' % i):
-                    with tf.device(device_setter):
-                        outputs_tuple, losses_tuple, metrics_tuple = self.tower_fn(tower_inputs[i], tower_targets[i])
-                        tower_outputs_tuple.append(outputs_tuple)
-                        d_losses, g_losses, g_losses_post = losses_tuple
-                        tower_d_losses.append(d_losses)
-                        tower_g_losses.append(g_losses)
-                        tower_g_losses_post.append(g_losses_post)
-                        tower_metrics_tuple.append(metrics_tuple)
-                        d_loss = sum(loss * weight for loss, weight in d_losses.values())
-                        g_loss = sum(loss * weight for loss, weight in g_losses.values())
-                        g_loss_post = sum(loss * weight for loss, weight in g_losses_post.values())
-                        tower_d_loss.append(d_loss)
-                        tower_g_loss.append(g_loss)
-                        tower_g_loss_post.append(g_loss_post)
-
-        d_vars = tf.trainable_variables(self.discriminator_scope)
-        de_vars = tf.trainable_variables(self.discriminator_encoder_scope)
-        self.d_vars = d_vars + [de_var for de_var in de_vars if de_var not in d_vars]
-        self.g_vars = tf.trainable_variables(self.generator_scope)
-
-        if self.mode == 'train' and (any(tower_d_losses) or any(tower_g_losses)):
-            with tf.name_scope('optimize'):
-                with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-                    if any(tower_d_losses):
-                        d_gradvars = compute_averaged_gradients(self.d_optimizer, tower_d_loss, var_list=self.d_vars)
-                        d_train_op = self.d_optimizer.apply_gradients(d_gradvars)
-                    else:
-                        d_train_op = tf.no_op()
-                with tf.control_dependencies([d_train_op]):
-                    if any(tower_g_losses_post):
-                        replace_read_ops(tower_g_loss_post, self.d_vars)
-                        g_gradvars = compute_averaged_gradients(self.g_optimizer, tower_g_loss_post, var_list=self.g_vars)
-                        g_train_op = self.g_optimizer.apply_gradients(
-                            g_gradvars, global_step=global_step)  # also increments global_step
-                    else:
-                        g_train_op = tf.assign_add(global_step, 1)
-            self.train_op = g_train_op
-        else:
-            self.train_op = None
-
-        # Device that runs the ops to apply global gradient updates.
-        consolidation_device = '/cpu:0'
-        with tf.device(consolidation_device):
-            self.gen_images, self.gen_images_enc, self.outputs, self.eval_outputs = reduce_tensors(tower_outputs_tuple)
-            self.d_losses = reduce_tensors(tower_d_losses, shallow=True)
-            self.g_losses = reduce_tensors(tower_g_losses, shallow=True)
-            self.metrics, self.eval_metrics = reduce_mean_tensors(tower_metrics_tuple)
-            self.d_loss = reduce_tensors(tower_d_loss)
-            self.g_loss = reduce_tensors(tower_g_loss)
-
-        add_summaries({name: tensor for name, tensor in self.inputs.items()
-                       if tensor.shape.ndims == 4 or (tensor.shape.ndims > 4 and
-                                                      tensor.shape[4].value in (1, 3))})
-        if self.targets is not None:
-            add_summaries({'targets': self.targets})
-        add_summaries({name: tensor for name, tensor in self.outputs.items()
-                       if tensor.shape.ndims == 4 or (tensor.shape.ndims > 4 and
-                                                      tensor.shape[4].value in (1, 3))})
-        add_scalar_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims == 0})
-        add_scalar_summaries(self.d_losses)
-        add_scalar_summaries(self.g_losses)
-        add_scalar_summaries(self.metrics)
-        add_tensor_summaries(self.eval_outputs, collections=[tf_utils.EVAL_SUMMARIES, tf_utils.IMAGE_SUMMARIES])
-        add_plot_summaries(self.eval_metrics, x_offset=self.hparams.context_frames + 1, collections=[tf_utils.EVAL_SUMMARIES])
