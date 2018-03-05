@@ -100,6 +100,9 @@ class BaseVideoDataset:
     def jpeg_encoding(self):
         raise NotImplementedError
 
+    def set_sequence_length(self, sequence_length):
+        self.hparams.sequence_length = sequence_length
+
     def parser(self, serialized_example):
         """
         Parses a single tf.train.Example or tf.train.SequenceExample into
