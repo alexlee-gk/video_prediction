@@ -345,11 +345,18 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             Conv2DRNNCell = Conv2DGRUCell
         else:
             raise NotImplementedError
-        conv_rnn_cell = Conv2DRNNCell(input_shape, filters, kernel_size=(5, 5),
-                                      normalizer_fn=normalizer_fn,
-                                      separate_norms=self.hparams.norm_layer == 'layer',
-                                      reuse=tf.get_variable_scope().reuse)
-        return conv_rnn_cell(inputs, state)
+        if self.hparams.ablation_conv_rnn_norm:
+            conv_rnn_cell = Conv2DRNNCell(input_shape, filters, kernel_size=(5, 5),
+                                          reuse=tf.get_variable_scope().reuse)
+            h, state = conv_rnn_cell(inputs, state)
+            outputs = (normalizer_fn(h), state)
+        else:
+            conv_rnn_cell = Conv2DRNNCell(input_shape, filters, kernel_size=(5, 5),
+                                          normalizer_fn=normalizer_fn,
+                                          separate_norms=self.hparams.norm_layer == 'layer',
+                                          reuse=tf.get_variable_scope().reuse)
+            outputs = conv_rnn_cell(inputs, state)
+        return outputs
 
     def call(self, inputs, states):
         norm_layer = ops.get_norm_layer(self.hparams.norm_layer)
@@ -678,6 +685,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             num_samples=8,
             nef=32,
             use_rnn_z=True,
+            ablation_conv_rnn_norm=False,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
