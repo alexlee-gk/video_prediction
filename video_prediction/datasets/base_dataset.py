@@ -140,7 +140,12 @@ class BaseVideoDataset:
         return input_batches, target_batches
 
     def preprocess_image(self, image):
-        """Preprocess a single image in [height, width, depth] layout."""
+        """Preprocess a single image.
+
+        Args:
+            image: A 3-D tensor of shape
+                `[in_height, in_width, in_channels]`.
+        """
         image_shape = image.get_shape().as_list()
         crop_size = self.hparams.crop_size
         scale_size = self.hparams.scale_size
@@ -160,6 +165,15 @@ class BaseVideoDataset:
                 # image remains unchanged
                 pass
         return image
+
+    def preprocess_images(self, images):
+        """Preprocess a sequence of images.
+
+        Args:
+            images: A 4-D tensor of shape
+                `[sequence_length, in_height, in_width, in_channels]`.
+        """
+        return images
 
     def num_examples_per_epoch(self):
         raise NotImplementedError
@@ -284,6 +298,7 @@ class VideoDataset(BaseVideoDataset):
                     state_like_seqs[example_name].append(image)
                 else:
                     state_like_seqs[example_name].append(features[name % i])
+        state_like_seqs['images'] = self.preprocess_images(state_like_seqs['images'])
         for i in range(self._max_sequence_length - 1):
             for example_name, (name, shape) in self.action_like_names_and_shapes.items():
                 action_like_seqs[example_name].append(features[name % i])
@@ -360,6 +375,8 @@ class SequenceExampleVideoDataset(BaseVideoDataset):
                 state_like_seqs[example_name] = images
             else:
                 state_like_seqs[example_name] = sequence_features[name]
+        state_like_seqs['images'] = self.preprocess_images(state_like_seqs['images'])
+
         for example_name, (name, shape) in self.action_like_names_and_shapes.items():
             action_like_seqs[example_name] = sequence_features[name]
 

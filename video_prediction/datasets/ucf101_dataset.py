@@ -19,8 +19,8 @@ class UCF101VideoDataset(SequenceExampleVideoDataset):
     def get_default_hparams_dict(self):
         default_hparams = super(UCF101VideoDataset, self).get_default_hparams_dict()
         hparams = dict(
-            context_frames=10,
-            sequence_length=20,
+            context_frames=4,
+            sequence_length=12,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
@@ -28,15 +28,11 @@ class UCF101VideoDataset(SequenceExampleVideoDataset):
     def jpeg_encoding(self):
         return True
 
-    def preprocess_image(self, image):
-        if self.hparams.crop_size:
-            raise NotImplementedError
-        if self.hparams.scale_size:
-            raise NotImplementedError
+    def preprocess_images(self, images):
         # train with 64x64 images and validate/test with the full images
-        if self.mode == 'train':
-            image = tf.random_crop(image, (64, 64, 3))
-        return image
+        # if self.mode == 'train':
+        images = tf.random_crop(images, [tf.shape(images)[0], 64, 64, 3])
+        return images
 
 
 def _bytes_feature(value):
