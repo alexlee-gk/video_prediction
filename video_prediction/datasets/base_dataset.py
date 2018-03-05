@@ -139,40 +139,37 @@ class BaseVideoDataset:
         target_batches = state_like_batches['images'][:, self.hparams.context_frames:]
         return input_batches, target_batches
 
-    def preprocess_image(self, image):
-        """Preprocess a single image.
-
-        Args:
-            image: A 3-D tensor of shape
-                `[in_height, in_width, in_channels]`.
-        """
-        image_shape = image.get_shape().as_list()
-        crop_size = self.hparams.crop_size
-        scale_size = self.hparams.scale_size
-        if not crop_size:
-            crop_size = min(image_shape[0], image_shape[1])
-        image = tf.image.resize_image_with_crop_or_pad(image, crop_size, crop_size)
-        image = tf.reshape(image, [crop_size, crop_size, 3])
-        if scale_size:
-            # upsample with bilinear interpolation but downsample with area interpolation
-            if crop_size < scale_size:
-                image = tf.image.resize_images(image, [scale_size, scale_size],
-                                               method=tf.image.ResizeMethod.BILINEAR)
-            elif crop_size > scale_size:
-                image = tf.image.resize_images(image, [scale_size, scale_size],
-                                               method=tf.image.ResizeMethod.AREA)
+    def decode_and_preprocess_images(self, image_buffers, image_shape):
+        def decode_and_preprocess_image(image_buffer):
+            image_buffer = tf.reshape(image_buffer, [])
+            if self.jpeg_encoding:
+                image = tf.image.decode_jpeg(image_buffer)
             else:
-                # image remains unchanged
-                pass
-        return image
+                image = tf.decode_raw(image_buffer, tf.uint8)
+            image = tf.reshape(image, image_shape)
 
-    def preprocess_images(self, images):
-        """Preprocess a sequence of images.
+            crop_size = self.hparams.crop_size
+            scale_size = self.hparams.scale_size
+            if not crop_size:
+                crop_size = min(image_shape[0], image_shape[1])
+            image = tf.image.resize_image_with_crop_or_pad(image, crop_size, crop_size)
+            image = tf.reshape(image, [crop_size, crop_size, 3])
+            if scale_size:
+                # upsample with bilinear interpolation but downsample with area interpolation
+                if crop_size < scale_size:
+                    image = tf.image.resize_images(image, [scale_size, scale_size],
+                                                   method=tf.image.ResizeMethod.BILINEAR)
+                elif crop_size > scale_size:
+                    image = tf.image.resize_images(image, [scale_size, scale_size],
+                                                   method=tf.image.ResizeMethod.AREA)
+                else:
+                    # image remains unchanged
+                    pass
+            return image
 
-        Args:
-            images: A 4-D tensor of shape
-                `[sequence_length, in_height, in_width, in_channels]`.
-        """
+        images = tf.map_fn(decode_and_preprocess_image, image_buffers, dtype=tf.uint8,
+                           parallel_iterations=self.hparams.sequence_length)
+        images = tf.image.convert_image_dtype(images, dtype=tf.float32)
         return images
 
     def num_examples_per_epoch(self):
@@ -286,19 +283,7 @@ class VideoDataset(BaseVideoDataset):
         action_like_seqs = OrderedDict([(example_name, []) for example_name in self.action_like_names_and_shapes])
         for i in range(self._max_sequence_length):
             for example_name, (name, shape) in self.state_like_names_and_shapes.items():
-                if example_name == 'images':  # special handling for image
-                    if self.jpeg_encoding:
-                        image_buffer = tf.reshape(features[name % i], shape=[])
-                        image = tf.image.decode_jpeg(image_buffer, channels=shape[-1])
-                    else:
-                        image = tf.decode_raw(features[name % i], tf.uint8)
-                    image = tf.image.convert_image_dtype(image, dtype=tf.float32)
-                    image = tf.reshape(image, shape)
-                    image = self.preprocess_image(image)
-                    state_like_seqs[example_name].append(image)
-                else:
-                    state_like_seqs[example_name].append(features[name % i])
-        state_like_seqs['images'] = self.preprocess_images(state_like_seqs['images'])
+                state_like_seqs[example_name].append(features[name % i])
         for i in range(self._max_sequence_length - 1):
             for example_name, (name, shape) in self.action_like_names_and_shapes.items():
                 action_like_seqs[example_name].append(features[name % i])
@@ -333,6 +318,9 @@ class VideoDataset(BaseVideoDataset):
             seq = tf.reshape(seq, [sequence_length - 1, -1])
             action_like_seqs[example_name] = seq
 
+        # decode and preprocess images on the sampled slice only
+        _, image_shape = self.state_like_names_and_shapes['images']
+        state_like_seqs['images'] = self.decode_and_preprocess_images(state_like_seqs['images'], image_shape)
         return state_like_seqs, action_like_seqs
 
 
@@ -360,23 +348,7 @@ class SequenceExampleVideoDataset(BaseVideoDataset):
         state_like_seqs = OrderedDict()
         action_like_seqs = OrderedDict()
         for example_name, (name, shape) in self.state_like_names_and_shapes.items():
-            if example_name == 'images':  # special handling for image
-                def preprocess_image(image_string):
-                    if self.jpeg_encoding:
-                        image_buffer = tf.reshape(image_string, shape=[])
-                        image = tf.image.decode_jpeg(image_buffer, channels=shape[-1])
-                    else:
-                        image = tf.decode_raw(image_string, tf.uint8)
-                    image = tf.image.convert_image_dtype(image, dtype=tf.float32)
-                    image = tf.reshape(image, shape)
-                    image = self.preprocess_image(image)
-                    return image
-                images = tf.map_fn(preprocess_image, sequence_features[name], dtype=tf.float32)
-                state_like_seqs[example_name] = images
-            else:
-                state_like_seqs[example_name] = sequence_features[name]
-        state_like_seqs['images'] = self.preprocess_images(state_like_seqs['images'])
-
+            state_like_seqs[example_name] = sequence_features[name]
         for example_name, (name, shape) in self.action_like_names_and_shapes.items():
             action_like_seqs[example_name] = sequence_features[name]
 
@@ -418,6 +390,9 @@ class SequenceExampleVideoDataset(BaseVideoDataset):
             seq = tf.reshape(seq, [sequence_length - 1, -1])
             action_like_seqs[example_name] = seq
 
+        # decode and preprocess images on the sampled slice only
+        _, image_shape = self.state_like_names_and_shapes['images']
+        state_like_seqs['images'] = self.decode_and_preprocess_images(state_like_seqs['images'], image_shape)
         return state_like_seqs, action_like_seqs
 
     def num_examples_per_epoch(self):

@@ -21,6 +21,7 @@ class UCF101VideoDataset(SequenceExampleVideoDataset):
         hparams = dict(
             context_frames=4,
             sequence_length=12,
+            random_crop_size=64,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
@@ -28,10 +29,22 @@ class UCF101VideoDataset(SequenceExampleVideoDataset):
     def jpeg_encoding(self):
         return True
 
-    def preprocess_images(self, images):
-        # train with 64x64 images and validate/test with the full images
-        # if self.mode == 'train':
-        images = tf.random_crop(images, [tf.shape(images)[0], 64, 64, 3])
+    def decode_and_preprocess_images(self, image_buffers, image_shape):
+        if self.hparams.crop_size:
+            raise NotImplementedError
+        if self.hparams.scale_size:
+            raise NotImplementedError
+        image_buffers = tf.reshape(image_buffers, [-1])
+        image_size = image_shape[-3:-1]
+        random_crop_size = [self.hparams.random_crop_size] * 2
+        crop_y = tf.random_uniform([], minval=0, maxval=image_size[0] - random_crop_size [0], dtype=tf.int32)
+        crop_x = tf.random_uniform([], minval=0, maxval=image_size[1] - random_crop_size [1], dtype=tf.int32)
+        crop_window = [crop_y, crop_x] + random_crop_size
+        images = tf.map_fn(lambda image_buffer: tf.image.decode_and_crop_jpeg(image_buffer, crop_window),
+                           image_buffers, dtype=tf.uint8, parallel_iterations=self.hparams.sequence_length)
+        images = tf.image.convert_image_dtype(images, dtype=tf.float32)
+        images.set_shape([None] + random_crop_size + [image_shape[-1]])
+        # TODO: only random crop for training
         return images
 
 
