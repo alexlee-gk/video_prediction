@@ -683,7 +683,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             use_e_rnn=False,
             nz=8,
             num_samples=8,
-            nef=32,
+            nef=64,
             use_rnn_z=True,
             ablation_conv_rnn_norm=False,
         )
