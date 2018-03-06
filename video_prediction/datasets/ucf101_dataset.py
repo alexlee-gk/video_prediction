@@ -3,6 +3,7 @@ import glob
 import itertools
 import os
 import random
+import re
 from multiprocessing import Pool
 
 import cv2
@@ -35,10 +36,10 @@ class UCF101VideoDataset(SequenceExampleVideoDataset):
         if self.hparams.scale_size:
             raise NotImplementedError
         image_buffers = tf.reshape(image_buffers, [-1])
-        image_size = image_shape[-3:-1]
+        image_size = tf.image.extract_jpeg_shape(image_buffers[0])[:2]  # should be the same as image_shape[:2]
         random_crop_size = [self.hparams.random_crop_size] * 2
-        crop_y = tf.random_uniform([], minval=0, maxval=image_size[0] - random_crop_size [0], dtype=tf.int32)
-        crop_x = tf.random_uniform([], minval=0, maxval=image_size[1] - random_crop_size [1], dtype=tf.int32)
+        crop_y = tf.random_uniform([], minval=0, maxval=image_size[0] - random_crop_size[0], dtype=tf.int32)
+        crop_x = tf.random_uniform([], minval=0, maxval=image_size[1] - random_crop_size[1], dtype=tf.int32)
         crop_window = [crop_y, crop_x] + random_crop_size
         images = tf.map_fn(lambda image_buffer: tf.image.decode_and_crop_jpeg(image_buffer, crop_window),
                            image_buffers, dtype=tf.uint8, parallel_iterations=self.hparams.sequence_length)
@@ -46,6 +47,19 @@ class UCF101VideoDataset(SequenceExampleVideoDataset):
         images.set_shape([None] + random_crop_size + [image_shape[-1]])
         # TODO: only random crop for training
         return images
+
+    def num_examples_per_epoch(self):
+        # extract information from filename to count the number of trajectories in the dataset
+        count = 0
+        for filename in self.filenames:
+            match = re.search('sequence_(\d+)_to_(\d+).tfrecords', os.path.basename(filename))
+            start_traj_iter = int(match.group(1))
+            end_traj_iter = int(match.group(2))
+            count += end_traj_iter - start_traj_iter + 1
+
+        # alternatively, the dataset size can be determined like this, but it's very slow
+        # count = sum(sum(1 for _ in tf.python_io.tf_record_iterator(filename)) for filename in filenames)
+        return count
 
 
 def _bytes_feature(value):
@@ -93,6 +107,11 @@ def read_video(fname):
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         frames.append(image)
         success, image = vidcap.read()
+
+    if frames[0].shape != (240, 320, 3):
+        original_shape = frames[0].shape
+        frames = [cv2.resize(image, (320, 240), interpolation=cv2.INTER_LINEAR) for image in frames]
+        print('video %s had to be resized from %r to %r' % (fname, original_shape, frames[0].shape))
     return frames
 
 

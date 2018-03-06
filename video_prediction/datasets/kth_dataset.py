@@ -28,6 +28,9 @@ class KTHVideoDataset(SequenceExampleVideoDataset):
     def jpeg_encoding(self):
         return False
 
+    def num_examples_per_epoch(self):
+        return len(self.filenames)
+
 
 def _bytes_feature(value):
     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))

@@ -395,9 +395,6 @@ class SequenceExampleVideoDataset(BaseVideoDataset):
         state_like_seqs['images'] = self.decode_and_preprocess_images(state_like_seqs['images'], image_shape)
         return state_like_seqs, action_like_seqs
 
-    def num_examples_per_epoch(self):
-        return len(self.filenames)
-
 
 if __name__ == '__main__':
     import cv2
