@@ -9,13 +9,13 @@ from multiprocessing import Pool
 import cv2
 import tensorflow as tf
 
-from video_prediction.datasets.base_dataset import SequenceExampleVideoDataset
+from video_prediction.datasets.base_dataset import VarLenFeatureVideoDataset
 
 
-class UCF101VideoDataset(SequenceExampleVideoDataset):
+class UCF101VideoDataset(VarLenFeatureVideoDataset):
     def __init__(self, *args, **kwargs):
         super(UCF101VideoDataset, self).__init__(*args, **kwargs)
-        self.state_like_names_and_shapes['images'] = 'image/encoded', (240, 320, 3)
+        self.state_like_names_and_shapes['images'] = 'images/encoded', (240, 320, 3)
 
     def get_default_hparams_dict(self):
         default_hparams = super(UCF101VideoDataset, self).get_default_hparams_dict()
@@ -66,6 +66,10 @@ def _bytes_feature(value):
     return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 
+def _bytes_list_feature(values):
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=values))
+
+
 def _int64_feature(value):
     return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
 
@@ -104,14 +108,8 @@ def read_video(fname):
     vidcap = cv2.VideoCapture(fname)
     frames, (success, image) = [], vidcap.read()
     while success:
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         frames.append(image)
         success, image = vidcap.read()
-
-    if frames[0].shape != (240, 320, 3):
-        original_shape = frames[0].shape
-        frames = [cv2.resize(image, (320, 240), interpolation=cv2.INTER_LINEAR) for image in frames]
-        print('video %s had to be resized from %r to %r' % (fname, original_shape, frames[0].shape))
     return frames
 
 
@@ -119,17 +117,17 @@ def save_tf_record(output_fname, sequences, preprocess_image):
     print('saving sequences to %s' % output_fname)
     with tf.python_io.TFRecordWriter(output_fname) as writer:
         for sequence in sequences:
+            num_frames = len(sequence)
             height, width, channels = sequence[0].shape
-            context = tf.train.Features(feature={
+            encoded_sequence = [preprocess_image(image) for image in sequence]
+            features = tf.train.Features(feature={
+                'sequence_length': _int64_feature(num_frames),
                 'height': _int64_feature(height),
                 'width': _int64_feature(width),
                 'channels': _int64_feature(channels),
+                'images/encoded': _bytes_list_feature(encoded_sequence),
             })
-            image_features = [_bytes_feature(preprocess_image(image)) for image in sequence]
-            feature_lists = tf.train.FeatureLists(feature_list={
-                'image/encoded': tf.train.FeatureList(feature=image_features),
-            })
-            example = tf.train.SequenceExample(context=context, feature_lists=feature_lists)
+            example = tf.train.Example(features=features)
             writer.write(example.SerializeToString())
 
 
@@ -145,10 +143,10 @@ def read_videos_and_save_tf_records(output_dir, fnames, start_sequence_iter=None
     if end_sequence_iter is None:
         end_sequence_iter = len(fnames)
 
-    sess = tf.Session()
-    image_ph = tf.placeholder(dtype=tf.uint8)
-    image_jpeg = tf.image.encode_jpeg(image_ph, format='rgb', quality=100)
-    encode_jpeg = lambda image: sess.run(image_jpeg, feed_dict={image_ph: image})
+    def preprocess_image(image):
+        if image.shape != (240, 320, 3):
+            image = cv2.resize(image, (320, 240), interpolation=cv2.INTER_LINEAR)
+        return tf.compat.as_bytes(cv2.imencode(".jpg", image)[1].tobytes())
 
     print('reading and saving sequences {0} to {1}'.format(start_sequence_iter, end_sequence_iter))
 
@@ -163,7 +161,7 @@ def read_videos_and_save_tf_records(output_dir, fnames, start_sequence_iter=None
         if len(sequences) == sequences_per_file or sequence_iter == (end_sequence_iter - 1):
             output_fname = 'sequence_{0}_to_{1}.tfrecords'.format(last_start_sequence_iter, sequence_iter)
             output_fname = os.path.join(output_dir, output_fname)
-            save_tf_record(output_fname, sequences, encode_jpeg)
+            save_tf_record(output_fname, sequences, preprocess_image)
             sequences[:] = []
 
 

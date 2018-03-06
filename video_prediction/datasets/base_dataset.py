@@ -396,6 +396,81 @@ class SequenceExampleVideoDataset(BaseVideoDataset):
         return state_like_seqs, action_like_seqs
 
 
+class VarLenFeatureVideoDataset(BaseVideoDataset):
+    """
+    This class supports reading tfrecords where an entire sequence is stored as
+    a single tf.train.Example.
+
+    https://github.com/tensorflow/tensorflow/issues/15977
+    """
+    def parser(self, serialized_example):
+        """
+        Parses a single tf.train.SequenceExample into images, states, actions, etc tensors.
+        """
+        features = dict()
+        features['sequence_length'] = tf.FixedLenFeature((), tf.int64)
+        for example_name, (name, shape) in self.state_like_names_and_shapes.items():
+            if example_name == 'images':
+                features[name] = tf.VarLenFeature(tf.string)
+            else:
+                features[name] = tf.VarLenFeature(tf.float32)
+        for example_name, (name, shape) in self.action_like_names_and_shapes.items():
+            features[name] = tf.VarLenFeature(tf.float32)
+
+        features = tf.parse_single_example(serialized_example, features=features)
+
+        example_sequence_length = features['sequence_length']
+
+        state_like_seqs = OrderedDict()
+        action_like_seqs = OrderedDict()
+        for example_name, (name, shape) in self.state_like_names_and_shapes.items():
+            if example_name == 'images':
+                seq = tf.sparse_tensor_to_dense(features[name], '')
+            else:
+                seq = tf.sparse_tensor_to_dense(features[name])
+                seq = tf.reshape(seq, [example_sequence_length] + list(shape))
+            state_like_seqs[example_name] = seq
+        for example_name, (name, shape) in self.action_like_names_and_shapes.items():
+            seq = tf.sparse_tensor_to_dense(features[name])
+            seq = tf.reshape(seq, [example_sequence_length - 1] + list(shape))
+            action_like_seqs[example_name] = seq
+
+        # handle random shifting and frame skip
+        sequence_length = self.hparams.sequence_length
+        frame_skip = self.hparams.frame_skip
+        time_shift = self.hparams.time_shift
+        if time_shift and self.mode == 'train':
+            assert time_shift > 0 and isinstance(time_shift, int)
+            num_shifts = ((example_sequence_length - 1) - (sequence_length - 1) * (frame_skip + 1)) // time_shift
+            assert_message = ('example_sequence_length has to be at least %d when '
+                              'sequence_length=%d, frame_skip=%d.' %
+                              ((sequence_length - 1) * (frame_skip + 1) + 1,
+                               sequence_length, frame_skip))
+            with tf.control_dependencies([tf.assert_greater_equal(num_shifts, tf.cast(0, num_shifts.dtype),
+                    data=[example_sequence_length, num_shifts], message=assert_message)]):
+                t_start = tf.random_uniform([], 0, num_shifts + 1, dtype=num_shifts.dtype) * time_shift
+        else:
+            t_start = 0
+        state_like_t_slice = slice(t_start, t_start + (sequence_length - 1) * (frame_skip + 1) + 1, frame_skip + 1)
+        action_like_t_slice = slice(t_start, t_start + (sequence_length - 1) * (frame_skip + 1))
+
+        for example_name, seq in state_like_seqs.items():
+            seq = seq[state_like_t_slice]
+            seq.set_shape([sequence_length] + seq.shape.as_list()[1:])
+            state_like_seqs[example_name] = seq
+        for example_name, seq in action_like_seqs.items():
+            seq = seq[action_like_t_slice]
+            seq.set_shape([(sequence_length - 1) * (frame_skip + 1)] + seq.shape.as_list()[1:])
+            # concatenate actions of skipped frames into single macro actions
+            seq = tf.reshape(seq, [sequence_length - 1, -1])
+            action_like_seqs[example_name] = seq
+
+        # decode and preprocess images on the sampled slice only
+        _, image_shape = self.state_like_names_and_shapes['images']
+        state_like_seqs['images'] = self.decode_and_preprocess_images(state_like_seqs['images'], image_shape)
+        return state_like_seqs, action_like_seqs
+
+
 if __name__ == '__main__':
     import cv2
     from video_prediction import datasets
