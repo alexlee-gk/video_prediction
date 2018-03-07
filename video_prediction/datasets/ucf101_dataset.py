@@ -41,8 +41,9 @@ class UCF101VideoDataset(VarLenFeatureVideoDataset):
         crop_y = tf.random_uniform([], minval=0, maxval=image_size[0] - random_crop_size[0], dtype=tf.int32)
         crop_x = tf.random_uniform([], minval=0, maxval=image_size[1] - random_crop_size[1], dtype=tf.int32)
         crop_window = [crop_y, crop_x] + random_crop_size
-        images = tf.map_fn(lambda image_buffer: tf.image.decode_and_crop_jpeg(image_buffer, crop_window),
-                           image_buffers, dtype=tf.uint8, parallel_iterations=self.hparams.sequence_length)
+        if not isinstance(image_buffers, (list, tuple)):
+            image_buffers = tf.unstack(image_buffers)
+        images = [tf.image.decode_and_crop_jpeg(image_buffer, crop_window) for image_buffer in image_buffers]
         images = tf.image.convert_image_dtype(images, dtype=tf.float32)
         images.set_shape([None] + random_crop_size + [image_shape[-1]])
         # TODO: only random crop for training

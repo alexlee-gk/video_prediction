@@ -167,8 +167,9 @@ class BaseVideoDataset:
                     pass
             return image
 
-        images = tf.map_fn(decode_and_preprocess_image, image_buffers, dtype=tf.uint8,
-                           parallel_iterations=self.hparams.sequence_length)
+        if not isinstance(image_buffers, (list, tuple)):
+            image_buffers = tf.unstack(image_buffers)
+        images = [decode_and_preprocess_image(image_buffer) for image_buffer in image_buffers]
         images = tf.image.convert_image_dtype(images, dtype=tf.float32)
         return images
 
@@ -288,6 +289,10 @@ class VideoDataset(BaseVideoDataset):
             for example_name, (name, shape) in self.action_like_names_and_shapes.items():
                 action_like_seqs[example_name].append(features[name % i])
 
+        # for this class, it's much faster to decode and preprocess the entire sequence before sampling a slice
+        _, image_shape = self.state_like_names_and_shapes['images']
+        state_like_seqs['images'] = self.decode_and_preprocess_images(state_like_seqs['images'], image_shape)
+
         # handle random shifting and frame skip
         sequence_length = self.hparams.sequence_length
         frame_skip = self.hparams.frame_skip
@@ -318,9 +323,6 @@ class VideoDataset(BaseVideoDataset):
             seq = tf.reshape(seq, [sequence_length - 1, -1])
             action_like_seqs[example_name] = seq
 
-        # decode and preprocess images on the sampled slice only
-        _, image_shape = self.state_like_names_and_shapes['images']
-        state_like_seqs['images'] = self.decode_and_preprocess_images(state_like_seqs['images'], image_shape)
         return state_like_seqs, action_like_seqs
 
 
