@@ -72,14 +72,14 @@ def save_image_sequence(prefix_fname, images, overlaid_images=None, centers=None
         overlaid_images = as_heatmap(overlaid_images)
         images = (1 - alpha) * gray_images[..., None] + alpha * overlaid_images
     for t, image in enumerate(images):
-        image_fname = '%s_%02d.jpg' % (prefix_fname, time_start_ind + t)
+        image_fname = '%s_%02d.png' % (prefix_fname, time_start_ind + t)
         if centers is not None:
             scale = np.max(np.array([256, 256]) / np.array(image.shape[:2]))
             image = resize_and_draw_circle(image, np.array(image.shape[:2]) * scale, centers[t], radius,
                                            edgecolor='r', fill=False, linestyle='--', linewidth=2)
         image = (image * 255.0).astype(np.uint8)
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        cv2.imwrite(image_fname, image, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
+        cv2.imwrite(image_fname, image)
 
 
 def save_image_sequences(prefix_fname, images, overlaid_images=None, centers=None,
@@ -132,6 +132,36 @@ def merge_hparams(hparams0, hparams1):
     if len(hparams) == 1:
         hparams, = hparams
     return hparams
+
+
+def save_prediction_eval_results(task_dir, results, model_hparams, sample_start_ind=0, only_metrics=False, subtasks=None):
+    context_frames = model_hparams.context_frames
+    context_images = results['images'][:, :context_frames]
+    images = results['eval_images']
+    metric_names = ['psnr', 'ssim', 'ssim_scikit', 'ssim_finn', 'vgg_csim']
+    metric_fns = [metrics.peak_signal_to_noise_ratio_np,
+                  metrics.structural_similarity_np,
+                  metrics.structural_similarity_scikit_np,
+                  metrics.structural_similarity_finn_np,
+                  None]
+    subtasks = subtasks or ['max']
+    for metric_name, metric_fn in zip(metric_names, metric_fns):
+        for subtask in subtasks:
+            subtask_dir = task_dir + '_%s_%s' % (metric_name, subtask)
+            gen_images = results.get('eval_gen_images_%s/%s' % (metric_name, subtask), results.get('eval_gen_images'))
+            if metric_fn is not None:  # recompute using numpy implementation
+                metric = metric_fn(images, gen_images, keep_axis=(0, 1))
+            else:
+                metric = results['eval_%s/%s' % (metric_name, subtask)]
+            save_metrics(os.path.join(subtask_dir, 'metrics', metric_name),
+                         metric, sample_start_ind=sample_start_ind)
+            if only_metrics:
+                continue
+
+            save_image_sequences(os.path.join(subtask_dir, 'inputs', 'context_image'),
+                                 context_images, sample_start_ind=sample_start_ind)
+            save_image_sequences(os.path.join(subtask_dir, 'outputs', 'gen_image'),
+                                 gen_images, sample_start_ind=sample_start_ind)
 
 
 def save_prediction_results(task_dir, results, model_hparams, sample_start_ind=0, only_metrics=False):
@@ -256,34 +286,49 @@ def main():
     └── ...
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("results_dir", type=str)
-    parser.add_argument("--mode", type=str, choices=['val', 'test'], default='val')
-    parser.add_argument("--input_dir", type=str, required=True,
-                        help="either a directory containing subdirectories train,"
-                             "val, test, etc, or a directory containing the tfrecords")
-    parser.add_argument("--seed", type=int)
+    parser.add_argument("--input_dir", type=str, required=True, help="either a directory containing subdirectories train,"
+                                                                     "val, test, etc, or a directory containing the tfrecords")
+    parser.add_argument("--output_dir", default=None, help="where to put output files")
+    parser.add_argument("--results_dir", type=str, default='results')
+    parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--checkpoint", type=str,
                         help="directory with checkpoint or checkpoint name (e.g. checkpoint_dir/model-200000) "
                              "to resume training from or use for testing. Can specify multiple checkpoints. "
                              "If more than one checkpoint is provided, the global step from the checkpoints "
                              "are not restored.")
+    parser.add_argument("--mode", type=str, choices=['val', 'test'], default='val')
+
     parser.add_argument("--batch_size", type=int, default=16, help="number of samples in batch")
+    parser.add_argument("--num_samples", type=int, help="number of samples for the table of sequence (all of them by default)")
+
+    parser.add_argument("--num_gpus", type=int, default=1)
+    parser.add_argument("--eval_parallel_iterations", type=int, default=10)
     parser.add_argument("--gpu_mem_frac", type=float, default=0, help="fraction of gpu memory to use")
     parser.add_argument("--dataset", type=str, help="dataset class name")
     parser.add_argument("--dataset_hparams", type=str, help="a string of comma separated list of dataset hyperparameters")
     parser.add_argument("--model", type=str, help="model class name")
     parser.add_argument("--model_hparams", type=str, help="a string of comma separated list of model hyperparameters")
+
     parser.add_argument("--tasks", type=str, nargs='+', help='tasks to evaluation (e.g. prediction, servo, motion)')
+    parser.add_argument("--eval_substasks", type=str, nargs='+', default=['max', 'min'], help='subtasks to evaluation (e.g. max, avg, min)')
     parser.add_argument("--only_metrics", action='store_true')
     parser.add_argument("--num_stochastic_samples", type=int, default=0)
 
     args = parser.parse_args()
+
+    cuda_visible_devices = os.environ['CUDA_VISIBLE_DEVICES']
+    if cuda_visible_devices == '':
+        assert args.num_gpus == 0
+    else:
+        assert len(cuda_visible_devices.split(',')) == args.num_gpus
 
     if args.seed is not None:
         tf.set_random_seed(args.seed)
         np.random.seed(args.seed)
         random.seed(args.seed)
 
+    dataset_hparams_dict = {}
+    model_hparams_dict = {}
     if args.checkpoint:
         checkpoint_dir = os.path.normpath(args.checkpoint)
         if not os.path.isdir(args.checkpoint):
@@ -292,50 +337,67 @@ def main():
             print("loading options from checkpoint %s" % args.checkpoint)
             options = json.loads(f.read())
             args.dataset = args.dataset or options['dataset']
-            args.dataset_hparams = merge_hparams(options['dataset_hparams'], args.dataset_hparams)
             args.model = args.model or options['model']
-            args.model_hparams = merge_hparams(options['model_hparams'], args.model_hparams)
-        output_dir = os.path.join(args.results_dir, os.path.split(checkpoint_dir)[1])
+        try:
+            with open(os.path.join(checkpoint_dir, "dataset_hparams.json")) as f:
+                dataset_hparams_dict = json.loads(f.read())
+        except FileNotFoundError:
+            print("model_hparams.json was not loaded because it does not exist")
+        try:
+            with open(os.path.join(checkpoint_dir, "model_hparams.json")) as f:
+                model_hparams_dict = json.loads(f.read())
+                model_hparams_dict.pop('num_gpus', None)
+        except FileNotFoundError:
+            print("model_hparams.json was not loaded because it does not exist")
+        args.output_dir = args.output_dir or os.path.join(args.results_dir, os.path.split(checkpoint_dir)[1])
     else:
         if not args.dataset:
             raise ValueError('dataset is required when checkpoint is not specified')
         if not args.model:
             raise ValueError('model is required when checkpoint is not specified')
-        output_dir = os.path.join(args.results_dir, args.model)
+        args.output_dir = args.output_dir or os.path.join(args.results_dir, 'model.%s' % args.model)
 
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    with open(os.path.join(output_dir, "options.json"), "w") as f:
-        f.write(json.dumps(vars(args), sort_keys=True, indent=4))
     print('----------------------------------- Options ------------------------------------')
     for k, v in args._get_kwargs():
         print(k, "=", v)
     print('------------------------------------- End --------------------------------------')
 
     VideoDataset = datasets.get_dataset_class(args.dataset)
-    dataset = VideoDataset(args.input_dir, mode=args.mode, num_epochs=1, hparams=args.dataset_hparams)
-    inputs, _ = dataset.make_batch(args.batch_size)
+    dataset = VideoDataset(args.input_dir, mode=args.mode, num_epochs=1, hparams_dict=dataset_hparams_dict, hparams=args.dataset_hparams)
 
-    tasks = args.tasks
-    if tasks is None:
-        tasks = ['prediction', 'servo']
-        if 'pix_distribs' in inputs:
-            tasks.append('motion')
+    def override_hparams_dict(dataset):
+        hparams_dict = dict(model_hparams_dict)
+        hparams_dict['context_frames'] = dataset.hparams.context_frames
+        hparams_dict['sequence_length'] = dataset.hparams.sequence_length
+        hparams_dict['repeat'] = dataset.hparams.time_shift
+        return hparams_dict
 
     VideoPredictionModel = models.get_model_class(args.model)
-    model_hparams_dict = dict(context_frames=dataset.hparams.context_frames,
-                              sequence_length=dataset.hparams.sequence_length,
-                              repeat=dataset.hparams.time_shift)
-    model = VideoPredictionModel(mode=args.mode, hparams_dict=model_hparams_dict, hparams=args.model_hparams)
+    model = VideoPredictionModel(mode='test', num_gpus=args.num_gpus, eval_parallel_iterations=args.eval_parallel_iterations,
+                                 hparams_dict=override_hparams_dict(dataset), hparams=args.model_hparams)
     context_frames = model.hparams.context_frames
     sequence_length = model.hparams.sequence_length
 
+    inputs, target = dataset.make_batch(args.batch_size)
+    if not isinstance(model, models.GroundTruthVideoPredictionModel):
+        for k, v in inputs.items():
+            if k != 'actions':
+                inputs[k] = v[:, :context_frames]
+
     input_phs = {k: tf.placeholder(v.dtype, v.shape, '%s_ph' % k) for k, v in inputs.items()}
+    target_ph = tf.placeholder(target.dtype, target.shape, 'targets_ph')
+
     with tf.variable_scope(''):
-        model.build_graph(input_phs)
+        model.build_graph(input_phs, target_ph)
+
+    tasks = args.tasks
+    if tasks is None:
+        tasks = ['prediction_eval']
+        if 'pix_distribs' in inputs:
+            tasks.append('motion')
+
     if 'servo' in tasks:
-        servo_model = VideoPredictionModel(mode=args.mode, hparams_dict=model_hparams_dict, hparams=args.model_hparams)
+        servo_model = VideoPredictionModel(mode='test', hparams_dict=model_hparams_dict, hparams=args.model_hparams)
         cem_batch_size = 200
         plan_horizon = sequence_length - 1
         image_shape = inputs['images'].shape.as_list()[2:]
@@ -352,26 +414,44 @@ def main():
         with tf.variable_scope('', reuse=True):
             servo_model.build_graph(servo_input_phs)
 
-    if not isinstance(model, models.NonTrainableVideoPredictionModel):
-        model.build_restore_graph(args.checkpoint)
+    output_dir = args.output_dir
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    with open(os.path.join(output_dir, "options.json"), "w") as f:
+        f.write(json.dumps(vars(args), sort_keys=True, indent=4))
+    with open(os.path.join(output_dir, "dataset_hparams.json"), "w") as f:
+        f.write(json.dumps(dataset.hparams.values(), sort_keys=True, indent=4))
+    with open(os.path.join(output_dir, "model_hparams.json"), "w") as f:
+        f.write(json.dumps(model.hparams.values(), sort_keys=True, indent=4))
 
     gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=args.gpu_mem_frac)
     config = tf.ConfigProto(gpu_options=gpu_options, allow_soft_placement=True)
     sess = tf.Session(config=config)
 
-    if not isinstance(model, models.NonTrainableVideoPredictionModel):
-        sess.run(model.restore_op)
+    model.restore(sess, args.checkpoint)
 
     if 'servo' in tasks:
         servo_policy = ServoPolicy(servo_model, sess)
 
     sample_ind = 0
     while True:
+        if args.num_samples and sample_ind >= args.num_samples:
+            break
         try:
-            input_results = sess.run(inputs)
+            input_results, target_result = sess.run([inputs, target])
         except tf.errors.OutOfRangeError:
             break
         print("evaluation samples from %d to %d" % (sample_ind, sample_ind + args.batch_size))
+
+        if 'prediction_eval' in tasks:
+            feed_dict = {input_ph: input_results[name] for name, input_ph in input_phs.items()}
+            feed_dict.update({target_ph: target_result})
+            fetches = {'images': model.inputs['images']}
+            fetches.update(model.eval_outputs.items())
+            fetches.update(model.eval_metrics.items())
+            results = sess.run(fetches, feed_dict=feed_dict)
+            save_prediction_eval_results(os.path.join(output_dir, 'prediction_eval'),
+                                         results, model.hparams, sample_ind, args.only_metrics, args.eval_substasks)
 
         if 'prediction' in tasks or 'motion' in tasks:  # do these together
             feed_dict = {input_ph: input_results[name] for name, input_ph in input_phs.items()}
@@ -403,38 +483,6 @@ def main():
                                             results, model.hparams, draw_center, sample_ind, args.only_metrics)
             else:
                 results = sess.run(fetches, feed_dict=feed_dict)
-                # import IPython; IPython.embed()
-                #
-                # images_ph = input_phs['images']
-                # states_ph = input_phs['states']
-                # actions_ph = input_phs['actions']
-                # images = feed_dict[images_ph]
-                # states = feed_dict[states_ph]
-                # feed_dict[images_ph] = np.repeat(images[0:1], args.batch_size, axis=0)
-                # feed_dict[states_ph] = np.repeat(states[0:1], args.batch_size, axis=0)
-                # r = 0.05
-                # angles = np.linspace(0, 2 * 2 * np.pi, 16, endpoint=False)
-                # actions = np.c_[r * np.cos(angles), r * np.sin(angles), np.zeros((args.batch_size, 2))]
-                # actions = np.repeat(actions[:, None, :], sequence_length - 1, axis=1)
-                # feed_dict[actions_ph] = actions
-                # results = sess.run(fetches, feed_dict=feed_dict)
-                #
-                # first_image = images[0][0]
-                # gen_images = results['gen_images']
-                #
-                # mask = np.mean((gen_images - first_image[None, None]) ** 2, axis=(0, -1))[-1]
-                # # mask = (mask > .25).astype(np.float32)
-                # mask = np.repeat(mask[..., None], 3, axis=-1)
-                #
-                # import cv2
-                # for gen_images_ in gen_images:
-                #     for gen_image in gen_images_:
-                #         image = np.concatenate([gen_image, mask], axis=1)
-                #         image = (image * 255).astype(np.uint8)
-                #         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-                #         cv2.imshow('image', image)
-                #         cv2.waitKey(50)
-
                 if 'prediction' in tasks:
                     save_prediction_results(os.path.join(output_dir, 'prediction'),
                                             results, model.hparams, sample_ind, args.only_metrics)
@@ -470,6 +518,13 @@ def main():
         sample_ind += args.batch_size
 
     metric_fnames = []
+    if 'prediction_eval' in tasks:
+        metric_names = ['psnr', 'ssim', 'ssim_finn', 'vgg_csim']
+        subtasks = ['max']
+        for metric_name in metric_names:
+            for subtask in subtasks:
+                metric_fnames.append(
+                    os.path.join(output_dir, 'prediction_eval_%s_%s' % (metric_name, subtask), 'metrics', metric_name))
     if 'prediction' in tasks:
         subtask = '_best' if args.num_stochastic_samples else ''
         metric_fnames.extend([

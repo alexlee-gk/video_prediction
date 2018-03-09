@@ -35,7 +35,7 @@ def save_images(image_fnames, images):
         os.makedirs(head, exist_ok=True)
     for image_fname, image in zip(image_fnames, images):
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        cv2.imwrite(image_fname, image, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
+        cv2.imwrite(image_fname, image)
 
 
 def save_gif(gif_fname, images, fps=4):
@@ -198,22 +198,22 @@ def main():
         colspans = [1]
         for task_name in task_names:
             # load input images from first method
-            input_fnames = sorted(glob.glob('%s/inputs/*_%05d_??.jpg' %
+            input_fnames = sorted(glob.glob('%s/inputs/*_%05d_??.png' %
                                             (glob.escape(os.path.join(method_dirs[0], task_name)), sample_ind)))
             input_images = load_images(input_fnames)
             # save input images as image sequence
             input_fnames = [os.path.join(task_name, 'inputs', os.path.basename(input_fname)) for input_fname in input_fnames]
             save_images([os.path.join(image_dir, input_fname) for input_fname in input_fnames], input_images)
             # infer output names from first method
-            output_fnames = sorted(glob.glob('%s/outputs/*_%05d_??.jpg' %
+            output_fnames = sorted(glob.glob('%s/outputs/*_%05d_??.png' %
                                              (glob.escape(os.path.join(method_dirs[0], task_name)), sample_ind)))
             output_names = sorted(set(os.path.splitext(os.path.basename(output_fname))[0][:-9]
-                                      for output_fname in output_fnames))  # remove _?????_??.jpg
+                                      for output_fname in output_fnames))  # remove _?????_??.png
             # load output images
             all_output_images = []
             for output_name in output_names:
                 for method_name, method_dir in zip(method_names, method_dirs):
-                    output_fnames = sorted(glob.glob('%s/outputs/%s_%05d_??.jpg' %
+                    output_fnames = sorted(glob.glob('%s/outputs/%s_%05d_??.png' %
                                                      (glob.escape(os.path.join(method_dir, task_name)),
                                                       output_name, sample_ind)))
                     output_images = load_images(output_fnames)
