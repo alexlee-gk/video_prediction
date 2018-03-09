@@ -21,8 +21,16 @@ class GroundTruthVideoPredictionModel(NonTrainableVideoPredictionModel):
 
         if self.targets is not None:
             self.metrics = self.metrics_fn(self.inputs, self.outputs, self.targets)
+            with tf.name_scope("metrics"):
+                self.metrics = self.metrics_fn(self.inputs, self.outputs, self.targets)
+            with tf.name_scope("eval_outputs_and_metrics"):
+                self.eval_outputs, self.eval_metrics = self.eval_outputs_and_metrics_fn(
+                    self.inputs, self.outputs, self.targets,
+                    parallel_iterations=self.eval_parallel_iterations)
         else:
             self.metrics = {}
+            self.eval_outputs = {}
+            self.eval_metrics = {}
 
 
 class RepeatVideoPredictionModel(NonTrainableVideoPredictionModel):
@@ -39,6 +47,13 @@ class RepeatVideoPredictionModel(NonTrainableVideoPredictionModel):
         self.gen_images = self.outputs['gen_images']
 
         if self.targets is not None:
-            self.metrics = self.metrics_fn(self.inputs, self.outputs, self.targets)
+            with tf.name_scope("metrics"):
+                self.metrics = self.metrics_fn(self.inputs, self.outputs, self.targets)
+            with tf.name_scope("eval_outputs_and_metrics"):
+                self.eval_outputs, self.eval_metrics = self.eval_outputs_and_metrics_fn(
+                    self.inputs, self.outputs, self.targets,
+                    parallel_iterations=self.eval_parallel_iterations)
         else:
             self.metrics = {}
+            self.eval_outputs = {}
+            self.eval_metrics = {}

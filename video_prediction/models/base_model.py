@@ -10,14 +10,15 @@ import video_prediction as vp
 from video_prediction.functional_ops import foldl
 from video_prediction.ops import flatten
 from video_prediction.utils import tf_utils
-from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_tensors, reduce_mean_tensors, \
-    local_device_setter, replace_read_ops, print_loss_info, transpose_batch_time, add_tensor_summaries, \
-    add_scalar_summaries, add_plot_summaries, add_summaries
+from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
+    replace_read_ops, print_loss_info, transpose_batch_time, add_tensor_summaries, add_scalar_summaries, \
+    add_plot_summaries, add_summaries
 from . import vgg_network
 
 
 class BaseVideoPredictionModel:
-    def __init__(self, mode='train', num_gpus=1, hparams_dict=None, hparams=None):
+    def __init__(self, mode='train', hparams_dict=None, hparams=None,
+                 num_gpus=1, eval_parallel_iterations=1):
         """
         Base video prediction model.
 
@@ -33,6 +34,7 @@ class BaseVideoPredictionModel:
         """
         self.mode = mode
         self.num_gpus = num_gpus
+        self.eval_parallel_iterations = eval_parallel_iterations
         self.hparams = self.parse_hparams(hparams_dict, hparams)
         if not self.hparams.context_frames:
             raise ValueError('Invalid context_frames %r. It might have to be '
@@ -105,19 +107,25 @@ class BaseVideoPredictionModel:
             ('psnr', vp.metrics.peak_signal_to_noise_ratio),
             ('mse', vp.metrics.mean_squared_error),
             ('ssim', vp.metrics.structural_similarity),
+            ('ssim_scikit', vp.metrics.structural_similarity_scikit),
+            ('ssim_finn', vp.metrics.structural_similarity_finn),
+            ('vgg_csim', vp.metrics.vgg_cosine_similarity),
             ('vgg_cdist', vp.metrics.vgg_cosine_distance),
         ]
         for metric_name, metric_fn in metric_fns:
             metrics[metric_name] = metric_fn(target_images, gen_images)
         return metrics
 
-    def eval_outputs_and_metrics_fn(self, inputs, outputs, targets, num_samples=100):
+    def eval_outputs_and_metrics_fn(self, inputs, outputs, targets, num_samples=100, parallel_iterations=1):
         eval_outputs = OrderedDict()
         eval_metrics = OrderedDict()
         metric_fns = [
             ('psnr', vp.metrics.peak_signal_to_noise_ratio),
             ('mse', vp.metrics.mean_squared_error),
             ('ssim', vp.metrics.structural_similarity),
+            ('ssim_scikit', vp.metrics.structural_similarity_scikit),
+            ('ssim_finn', vp.metrics.structural_similarity_finn),
+            ('vgg_csim', vp.metrics.vgg_cosine_similarity),
             ('vgg_cdist', vp.metrics.vgg_cosine_distance),
         ]
         eval_outputs['eval_images'] = targets
@@ -125,7 +133,7 @@ class BaseVideoPredictionModel:
             target_images = targets
             gen_images = outputs['gen_images']
             for metric_name, metric_fn in metric_fns:
-                metric = metric_fn(target_images, gen_images, keep_axis=0)
+                metric = metric_fn(target_images, gen_images, keep_axis=(0, 1))
                 eval_metrics['eval_%s/min' % metric_name] = metric
                 eval_metrics['eval_%s/avg' % metric_name] = metric
                 eval_metrics['eval_%s/max' % metric_name] = metric
@@ -134,11 +142,23 @@ class BaseVideoPredictionModel:
             def where_axis1(cond, x, y):
                 return transpose_batch_time(tf.where(cond, transpose_batch_time(x), transpose_batch_time(y)))
 
+            with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
+                _, target_vgg_features = vp.metrics._with_flat_batch(vgg_network.vgg16)(targets)
+
             def accum_gen_images_and_metrics_fn(a, unused):
                 with tf.variable_scope(self.generator_scope, reuse=True):
                     gen_images, _ = self.generator_fn(inputs)
+                with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
+                    _, gen_vgg_features = vp.metrics._with_flat_batch(vgg_network.vgg16)(gen_images)
                 for name, metric_fn in metric_fns:
-                    metric = metric_fn(targets, gen_images, keep_axis=(0, 1))  # time, batch_size
+                    if name in ('vgg_csim', 'vgg_cdist'):
+                        metric_fn = {'vgg_csim': vp.metrics.cosine_similarity, 'vgg_cdist': vp.metrics.cosine_distance}[name]
+                        metric = 0.0
+                        for feature0, feature1 in zip(target_vgg_features, gen_vgg_features):
+                            metric += metric_fn(feature0, feature1, keep_axis=(0, 1))
+                        metric /= len(target_vgg_features)
+                    else:
+                        metric = metric_fn(targets, gen_images, keep_axis=(0, 1))  # time, batch_size
                     cond_min = tf.less(tf.reduce_mean(metric, axis=0), tf.reduce_mean(a['eval_%s/min' % name], axis=0))
                     cond_max = tf.greater(tf.reduce_mean(metric, axis=0), tf.reduce_mean(a['eval_%s/max' % name], axis=0))
                     a['eval_%s/min' % name] = where_axis1(cond_min, metric, a['eval_%s/min' % name])
@@ -159,15 +179,15 @@ class BaseVideoPredictionModel:
                 initializer['eval_%s/max' % name] = tf.fill(targets.shape[:2], float('-inf'))
 
             eval_outputs_and_metrics = foldl(accum_gen_images_and_metrics_fn, tf.zeros([num_samples, 0]),
-                                             initializer=initializer, back_prop=False, parallel_iterations=1)
+                                             initializer=initializer, back_prop=False, parallel_iterations=parallel_iterations)
 
             for name, _ in metric_fns:
                 eval_outputs['eval_gen_images_%s/min' % name] = eval_outputs_and_metrics['eval_gen_images_%s/min' % name]
                 eval_outputs['eval_gen_images_%s/avg' % name] = eval_outputs_and_metrics['eval_gen_images_%s/sum' % name] / float(num_samples)
-                eval_outputs['eval_gen_images_%s/max' % name] = eval_outputs_and_metrics['eval_gen_images_%s/min' % name]
-                eval_metrics['eval_%s/min' % name] = tf.reduce_mean(eval_outputs_and_metrics['eval_%s/min' % name], axis=1)
-                eval_metrics['eval_%s/avg' % name] = tf.reduce_mean(eval_outputs_and_metrics['eval_%s/sum' % name], axis=1) / float(num_samples)
-                eval_metrics['eval_%s/max' % name] = tf.reduce_mean(eval_outputs_and_metrics['eval_%s/max' % name], axis=1)
+                eval_outputs['eval_gen_images_%s/max' % name] = eval_outputs_and_metrics['eval_gen_images_%s/max' % name]
+                eval_metrics['eval_%s/min' % name] = eval_outputs_and_metrics['eval_%s/min' % name]
+                eval_metrics['eval_%s/avg' % name] = eval_outputs_and_metrics['eval_%s/sum' % name] / float(num_samples)
+                eval_metrics['eval_%s/max' % name] = eval_outputs_and_metrics['eval_%s/max' % name]
         return eval_outputs, eval_metrics
 
     def restore(self, sess, checkpoints):
@@ -197,9 +217,10 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                  encoder_scope='encoder',
                  discriminator_encoder_scope='discriminator_encoder',
                  mode='train',
-                 num_gpus=1,
                  hparams_dict=None,
-                 hparams=None):
+                 hparams=None,
+                 num_gpus=1,
+                 **kwargs):
         """
         Trainable video prediction model with CPU and multi-GPU support.
 
@@ -222,7 +243,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                 where `name` must be defined in `self.get_default_hparams()`.
                 These values overrides any values in hparams_dict (if any).
         """
-        super(VideoPredictionModel, self).__init__(mode, num_gpus, hparams_dict, hparams)
+        super(VideoPredictionModel, self).__init__(mode, hparams_dict, hparams, num_gpus=num_gpus, **kwargs)
 
         self.generator_fn = functools.partial(generator_fn, hparams=self.hparams)
         self.encoder_fn = functools.partial(encoder_fn, hparams=self.hparams) if encoder_fn else None
@@ -432,26 +453,32 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             outputs['kl_weight'] = self.kl_weight
 
         if targets is not None:
-            with tf.name_scope("discriminator_loss"):
-                d_losses = self.discriminator_loss_fn(inputs, outputs, targets)
-                print_loss_info(d_losses, inputs, outputs, targets)
-            with tf.name_scope("generator_loss"):
-                g_losses = self.generator_loss_fn(inputs, outputs, targets)
-                print_loss_info(g_losses, inputs, outputs, targets)
-                if discrim_outputs_real_post or discrim_outputs_fake_post or \
-                        discrim_outputs_enc_real_post or discrim_outputs_enc_fake_post:
-                    outputs_post = OrderedDict(itertools.chain(outputs.items(),
-                                                               discrim_outputs_real_post.items(),
-                                                               discrim_outputs_fake_post.items(),
-                                                               discrim_outputs_enc_real_post.items(),
-                                                               discrim_outputs_enc_fake_post.items()))
-                    g_losses_post = self.generator_loss_fn(inputs, outputs_post, targets)
-                else:
-                    g_losses_post = g_losses
+            if self.mode != 'test':
+                with tf.name_scope("discriminator_loss"):
+                    d_losses = self.discriminator_loss_fn(inputs, outputs, targets)
+                    print_loss_info(d_losses, inputs, outputs, targets)
+                with tf.name_scope("generator_loss"):
+                    g_losses = self.generator_loss_fn(inputs, outputs, targets)
+                    print_loss_info(g_losses, inputs, outputs, targets)
+                    if discrim_outputs_real_post or discrim_outputs_fake_post or \
+                            discrim_outputs_enc_real_post or discrim_outputs_enc_fake_post:
+                        outputs_post = OrderedDict(itertools.chain(outputs.items(),
+                                                                   discrim_outputs_real_post.items(),
+                                                                   discrim_outputs_fake_post.items(),
+                                                                   discrim_outputs_enc_real_post.items(),
+                                                                   discrim_outputs_enc_fake_post.items()))
+                        g_losses_post = self.generator_loss_fn(inputs, outputs_post, targets)
+                    else:
+                        g_losses_post = g_losses
+            else:
+                d_losses = {}
+                g_losses = {}
+                g_losses_post = {}
             with tf.name_scope("metrics"):
                 metrics = self.metrics_fn(inputs, outputs, targets)
             with tf.name_scope("eval_outputs_and_metrics"):
-                eval_outputs, eval_metrics = self.eval_outputs_and_metrics_fn(inputs, outputs, targets)
+                eval_outputs, eval_metrics = self.eval_outputs_and_metrics_fn(inputs, outputs, targets,
+                                                                              parallel_iterations=self.eval_parallel_iterations)
         else:
             d_losses = {}
             g_losses = {}
@@ -581,7 +608,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                     tower_outputs_tuple)
                 self.d_losses = reduce_tensors(tower_d_losses, shallow=True)
                 self.g_losses = reduce_tensors(tower_g_losses, shallow=True)
-                self.metrics, self.eval_metrics = reduce_mean_tensors(tower_metrics_tuple)
+                self.metrics, self.eval_metrics = reduce_tensors(tower_metrics_tuple)
                 self.d_loss = reduce_tensors(tower_d_loss)
                 self.g_loss = reduce_tensors(tower_g_loss)
 
@@ -598,7 +625,8 @@ class VideoPredictionModel(BaseVideoPredictionModel):
         add_scalar_summaries(self.g_losses)
         add_scalar_summaries(self.metrics)
         add_tensor_summaries(self.eval_outputs, collections=[tf_utils.EVAL_SUMMARIES, tf_utils.IMAGE_SUMMARIES])
-        add_plot_summaries(self.eval_metrics, x_offset=self.hparams.context_frames + 1, collections=[tf_utils.EVAL_SUMMARIES])
+        add_plot_summaries({name: tf.reduce_mean(metric, axis=0) for name, metric in self.eval_metrics.items()},
+                           x_offset=self.hparams.context_frames + 1, collections=[tf_utils.EVAL_SUMMARIES])
 
     def generator_loss_fn(self, inputs, outputs, targets):
         hparams = self.hparams
