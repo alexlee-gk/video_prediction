@@ -71,6 +71,8 @@ class BaseVideoDataset:
             time_shift: shift in time by multiples of this, so time_shift=1
                 denotes all possible shifts. time_shift=0 denotes no shifting.
                 It is ignored (equiv. to time_shift=0) when mode != 'train'.
+            force_time_shift: whether to do the shift in time regardless of
+                mode.
             use_state: whether to load and return state and actions.
         """
         hparams = dict(
@@ -80,6 +82,7 @@ class BaseVideoDataset:
             sequence_length=0,
             frame_skip=0,
             time_shift=1,
+            force_time_shift=False,
             use_state=True,
         )
         return hparams
@@ -297,7 +300,7 @@ class VideoDataset(BaseVideoDataset):
         sequence_length = self.hparams.sequence_length
         frame_skip = self.hparams.frame_skip
         time_shift = self.hparams.time_shift
-        if time_shift and self.mode == 'train':
+        if (time_shift and self.mode == 'train') or self.hparams.force_time_shift:
             assert time_shift > 0 and isinstance(time_shift, int)
             num_shifts = ((self._max_sequence_length - 1) - (sequence_length - 1) * (frame_skip + 1)) // time_shift
             if num_shifts < 0:

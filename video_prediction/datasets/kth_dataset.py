@@ -21,6 +21,7 @@ class KTHVideoDataset(VarLenFeatureVideoDataset):
         hparams = dict(
             context_frames=10,
             sequence_length=20,
+            force_time_shift=True,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
