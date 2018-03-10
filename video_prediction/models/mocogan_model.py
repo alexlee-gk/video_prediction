@@ -265,8 +265,8 @@ def generator_fn(inputs, hparams=None):
         h_0 = gru_cell.zero_state(batch_size, tf.float32)
 
     h_t = [h_0]
-    for t in range(hparams.sequence_length - hparams.context_frames):
-        with tf.variable_scope('gru', reuse=t > 0):
+    for t in range(hparams.context_frames - 1, hparams.sequence_length - 1):
+        with tf.variable_scope('gru', reuse=t > hparams.context_frames - 1):
             e_t = tf.random_normal([batch_size, hparams.dim_z_motion])
             if 'actions' in inputs:
                 e_t = tf.concat(inputs['actions'][t], axis=-1)
