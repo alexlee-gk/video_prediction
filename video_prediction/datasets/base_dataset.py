@@ -152,7 +152,7 @@ class BaseVideoDataset:
             image = tf.reshape(image, image_shape)
             crop_size = self.hparams.crop_size
             scale_size = self.hparams.scale_size
-            if crop_size or scale_size
+            if crop_size or scale_size:
                 if not crop_size:
                     crop_size = min(image_shape[0], image_shape[1])
                 image = tf.image.resize_image_with_crop_or_pad(image, crop_size, crop_size)
