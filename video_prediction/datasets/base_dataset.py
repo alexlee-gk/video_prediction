@@ -150,24 +150,24 @@ class BaseVideoDataset:
             else:
                 image = tf.decode_raw(image_buffer, tf.uint8)
             image = tf.reshape(image, image_shape)
-
             crop_size = self.hparams.crop_size
             scale_size = self.hparams.scale_size
-            if not crop_size:
-                crop_size = min(image_shape[0], image_shape[1])
-            image = tf.image.resize_image_with_crop_or_pad(image, crop_size, crop_size)
-            image = tf.reshape(image, [crop_size, crop_size, 3])
-            if scale_size:
-                # upsample with bilinear interpolation but downsample with area interpolation
-                if crop_size < scale_size:
-                    image = tf.image.resize_images(image, [scale_size, scale_size],
-                                                   method=tf.image.ResizeMethod.BILINEAR)
-                elif crop_size > scale_size:
-                    image = tf.image.resize_images(image, [scale_size, scale_size],
-                                                   method=tf.image.ResizeMethod.AREA)
-                else:
-                    # image remains unchanged
-                    pass
+            if crop_size or scale_size
+                if not crop_size:
+                    crop_size = min(image_shape[0], image_shape[1])
+                image = tf.image.resize_image_with_crop_or_pad(image, crop_size, crop_size)
+                image = tf.reshape(image, [crop_size, crop_size, 3])
+                if scale_size:
+                    # upsample with bilinear interpolation but downsample with area interpolation
+                    if crop_size < scale_size:
+                        image = tf.image.resize_images(image, [scale_size, scale_size],
+                                                       method=tf.image.ResizeMethod.BILINEAR)
+                    elif crop_size > scale_size:
+                        image = tf.image.resize_images(image, [scale_size, scale_size],
+                                                       method=tf.image.ResizeMethod.AREA)
+                    else:
+                        # image remains unchanged
+                        pass
             return image
 
         if not isinstance(image_buffers, (list, tuple)):
@@ -369,7 +369,7 @@ class SequenceExampleVideoDataset(BaseVideoDataset):
         sequence_length = self.hparams.sequence_length
         frame_skip = self.hparams.frame_skip
         time_shift = self.hparams.time_shift
-        if time_shift and self.mode == 'train':
+        if (time_shift and self.mode == 'train') or self.hparams.force_time_shift:
             assert time_shift > 0 and isinstance(time_shift, int)
             num_shifts = ((example_sequence_length - 1) - (sequence_length - 1) * (frame_skip + 1)) // time_shift
             assert_message = ('example_sequence_length has to be at least %d when '
@@ -444,7 +444,7 @@ class VarLenFeatureVideoDataset(BaseVideoDataset):
         sequence_length = self.hparams.sequence_length
         frame_skip = self.hparams.frame_skip
         time_shift = self.hparams.time_shift
-        if time_shift and self.mode == 'train':
+        if (time_shift and self.mode == 'train') or self.hparams.force_time_shift:
             assert time_shift > 0 and isinstance(time_shift, int)
             num_shifts = ((example_sequence_length - 1) - (sequence_length - 1) * (frame_skip + 1)) // time_shift
             assert_message = ('example_sequence_length has to be at least %d when '
