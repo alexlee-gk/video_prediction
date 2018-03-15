@@ -283,7 +283,6 @@ def construct_model(images,
 
     # Main tower
     for t in range(hparams.sequence_length - 1):
-        image = images[t]
         action = actions[t]
         # Reuse variables after the first timestep.
         reuse = bool(gen_images)
@@ -299,11 +298,11 @@ def construct_model(images,
                 prev_image = gen_images[-1]
             elif done_warm_start:
                 # Scheduled sampling
-                prev_image = scheduled_sample(image, gen_images[-1], batch_size,
+                prev_image = scheduled_sample(images[t], gen_images[-1], batch_size,
                                               num_ground_truth)
             else:
                 # Always feed in ground_truth
-                prev_image = image
+                prev_image = images[t]
 
             # Predicted state is always fed back in
             state_action = tf.concat(axis=1, values=[action, current_state])
@@ -561,11 +560,12 @@ def scheduled_sample(ground_truth_x, generated_x, batch_size, num_ground_truth):
 
 def generator_fn(inputs, outputs_enc=None, hparams=None):
     images = tf.unstack(inputs['images'], axis=0)
+    batch_size = images[0].shape[0].value
     action_dim, state_dim = 4, 3
     # if not use_state, use zero actions and states to match reference implementation.
-    actions = inputs.get('actions', tf.zeros([hparams.sequence_length - 1, hparams.batch_size, action_dim]))
+    actions = inputs.get('actions', tf.zeros([hparams.sequence_length - 1, batch_size, action_dim]))
     actions = tf.unstack(actions, axis=0)
-    states = inputs.get('states', tf.zeros([hparams.sequence_length, hparams.batch_size, state_dim]))
+    states = inputs.get('states', tf.zeros([hparams.sequence_length, batch_size, state_dim]))
     states = tf.unstack(states, axis=0)
     iter_num = tf.to_float(tf.train.get_or_create_global_step())
 
@@ -588,7 +588,7 @@ def generator_fn(inputs, outputs_enc=None, hparams=None):
         'gen_states': tf.stack(gen_states, axis=0),
     }
     outputs = {name: output[hparams.context_frames - 1:] for name, output in outputs.items()}
-    gen_images = outputs['gen_images'][hparams.context_frames - 1:]
+    gen_images = outputs['gen_images']
     return gen_images, outputs
 
 
@@ -596,11 +596,13 @@ class SV2PVideoPredictionModel(VideoPredictionModel):
     def __init__(self, *args, **kwargs):
         super(SV2PVideoPredictionModel, self).__init__(
             generator_fn, encoder_fn=encoder_fn, *args, ** kwargs)
+        if self.hparams.schedule_sampling_k == -1:
+            self.encoder_fn = None
+        self.deterministic = not self.hparams.stochastic_model
 
     def get_default_hparams_dict(self):
         default_hparams = super(SV2PVideoPredictionModel, self).get_default_hparams_dict()
         hparams = dict(
-            batch_size=32,
             l1_weight=0.0,
             l2_weight=1.0,
             kl_weight=8 * 1e-3,  # equivalent to latent_loss_multiplier up to a factor
