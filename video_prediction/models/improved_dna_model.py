@@ -181,6 +181,9 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         self.inputs = inputs
         self.hparams = hparams
 
+        if self.hparams.where_add not in ('input', 'all', 'middle'):
+            raise ValueError('Invalid where_add %s' % self.hparams.where_add)
+
         batch_size = inputs['images'].shape[1].value
         image_shape = inputs['images'].shape.as_list()[2:]
         height, width, _ = image_shape
@@ -418,15 +421,19 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                 else:
                     h = layers[-1][-1]
                     kernel_size = (3, 3)
-                h = conv_pool2d(tile_concat([h, state_action_z[:, None, None, :]], axis=-1),
-                                out_channels, kernel_size=kernel_size, strides=(2, 2))
+                if self.hparams.where_add == 'all' or (self.hparams.where_add == 'input' and i == 0):
+                    h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
+                h = conv_pool2d(h, out_channels, kernel_size=kernel_size, strides=(2, 2))
                 h = norm_layer(h)
                 h = tf.nn.relu(h)
             if use_conv_rnn:
                 conv_rnn_state = conv_rnn_states[len(new_conv_rnn_states)]
                 with tf.variable_scope('%s_h%d' % (self.hparams.conv_rnn, i)):
-                        conv_rnn_h, conv_rnn_state = self._conv_rnn_func(tile_concat([h, state_action_z[:, None, None, :]], axis=-1),
-                                                              conv_rnn_state, out_channels)
+                    if self.hparams.where_add == 'all':
+                        conv_rnn_h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
+                    else:
+                        conv_rnn_h = h
+                    conv_rnn_h, conv_rnn_state = self._conv_rnn_func(conv_rnn_h, conv_rnn_state, out_channels)
                 new_conv_rnn_states.append(conv_rnn_state)
             layers.append((h, conv_rnn_h) if use_conv_rnn else (h,))
 
@@ -437,15 +444,19 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                     h = layers[-1][-1]
                 else:
                     h = tf.concat([layers[-1][-1], layers[num_encoder_layers - i - 1][-1]], axis=-1)
-                h = upsample_conv2d(tile_concat([h, state_action_z[:, None, None, :]], axis=-1),
-                                    out_channels, kernel_size=(3, 3), strides=(2, 2))
+                if self.hparams.where_add == 'all' or (self.hparams.where_add == 'middle' and i == 0):
+                    h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
+                h = upsample_conv2d(h, out_channels, kernel_size=(3, 3), strides=(2, 2))
                 h = norm_layer(h)
                 h = tf.nn.relu(h)
             if use_conv_rnn:
                 conv_rnn_state = conv_rnn_states[len(new_conv_rnn_states)]
                 with tf.variable_scope('%s_h%d' % (self.hparams.conv_rnn, len(layers))):
-                    conv_rnn_h, conv_rnn_state = self._conv_rnn_func(tile_concat([h, state_action_z[:, None, None, :]], axis=-1),
-                                                              conv_rnn_state, out_channels)
+                    if self.hparams.where_add == 'all':
+                        conv_rnn_h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
+                    else:
+                        conv_rnn_h = h
+                    conv_rnn_h, conv_rnn_state = self._conv_rnn_func(conv_rnn_h, conv_rnn_state, out_channels)
                 new_conv_rnn_states.append(conv_rnn_state)
             layers.append((h, conv_rnn_h) if use_conv_rnn else (h,))
         assert len(new_conv_rnn_states) == len(conv_rnn_states)
@@ -667,6 +678,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             transformation='cdna',
             kernel_size=(5, 5),
             dilation_rate=(1, 1),
+            where_add='all',
             rnn='lstm',
             conv_rnn='lstm',
             num_transformed_images=4,
