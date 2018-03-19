@@ -4,6 +4,7 @@ from scipy import signal
 from tensorflow.python.util import nest
 
 from video_prediction.models import vgg_network
+from video_prediction.utils.tf_utils import PersistentOpEvaluator
 
 
 def _axis(keep_axis, ndims):
@@ -94,8 +95,9 @@ def peak_signal_to_noise_ratio(true, pred, keep_axis=None):
     true = tf.convert_to_tensor(true)
     pred = tf.convert_to_tensor(pred)
     ndims = max(true.shape.ndims, pred.shape.ndims)
-    mse = mean_squared_error(true, pred, keep_axis=list(range(ndims))[:-3])
+    mse = mean_squared_error(true, pred, keep_axis=list(range(ndims))[:-3] + [ndims - 1])
     psnr = 10.0 * tf.log(1.0 / mse) / tf.cast(tf.log(10.0), mse.dtype)
+    psnr = tf.reduce_mean(psnr, axis=-1)
     return tf.reduce_mean(psnr, axis=_axis(keep_axis, psnr.shape.ndims))
 
 
@@ -120,9 +122,11 @@ def mean_squared_error(true, pred, keep_axis=None):
 def _with_flat_batch(flat_batch_fn):
     def fn(x, *args, **kwargs):
         shape = tf.shape(x)
-        flat_batch_x = tf.reshape(x, tf.concat([[-1], shape[-3:]], axis=0))
+        flat_batch_shape = tf.concat([[-1], shape[-3:]], axis=0)
+        flat_batch_shape.set_shape([4])
+        flat_batch_x = tf.reshape(x, flat_batch_shape)
         flat_batch_r = flat_batch_fn(flat_batch_x, *args, **kwargs)
-        r = nest.map_structure(lambda x: tf.reshape(x, tf.concat([shape[:-3], x.shape[1:]], axis=0)),
+        r = nest.map_structure(lambda x: tf.reshape(x, tf.concat([shape[:-3], tf.shape(x)[1:]], axis=0)),
                                flat_batch_r)
         return r
     return fn
@@ -221,7 +225,7 @@ def structural_similarity_finn(X, Y, keep_axis=None):
 
 
 def normalize_tensor(tensor, eps=1e-10):
-    norm_factor = tf.norm(tensor, axis=-1, keep_dims=True)
+    norm_factor = tf.norm(tensor, axis=-1, keepdims=True)
     return tensor / (norm_factor + eps)
 
 
@@ -263,7 +267,7 @@ def vgg_cosine_distance(image0, image1, keep_axis=None):
 
 
 def normalize_tensor_np(tensor, eps=1e-10):
-    norm_factor = np.linalg.norm(tensor, axis=-1, keep_dims=True)
+    norm_factor = np.linalg.norm(tensor, axis=-1, keepdims=True)
     return tensor / (norm_factor + eps)
 
 
@@ -284,28 +288,49 @@ def cosine_distance_np(tensor0, tensor1, keep_axis=None):
     return 1.0 - cosine_similarity_np(tensor0, tensor1, keep_axis=keep_axis)
 
 
-def vgg_cosine_similarity_np(image0, image1, keep_axis=None, sess=None):
-    if sess is None:
-        sess = tf.Session()
-        csim = vgg_cosine_similarity(image0, image1, keep_axis=keep_axis)
-        sess.run(tf.global_variables_initializer())
-        vgg_network.vgg_assign_from_values_fn(var_name_prefix='vgg/')(sess)
-    else:
-        csim = vgg_cosine_similarity(image0, image1, keep_axis=keep_axis)
-    csim = sess.run(csim)
+class _VGGFeaturesExtractor(PersistentOpEvaluator):
+    def __init__(self):
+        super(_VGGFeaturesExtractor, self).__init__()
+        self._image_placeholder = None
+        self._feature_op = None
+        self._assign_from_values_fn = None
+        self._assigned = False
+
+    def initialize_graph(self):
+        self._image_placeholder = tf.placeholder(dtype=tf.float32)
+        with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
+            _, self._feature_op = _with_flat_batch(vgg_network.vgg16)(self._image_placeholder)
+        self._assign_from_values_fn = vgg_network.vgg_assign_from_values_fn(var_name_prefix='vgg/')
+
+    def run(self, image):
+        if not isinstance(image, np.ndarray):
+            raise ValueError("'image' must be a numpy array: %r" % image)
+        if image.dtype not in (np.float32, np.float64):
+            raise ValueError("'image' dtype must be float32 or float64, but is %r" % image.dtype)
+        if image.dtype != np.float32:
+            image = image.astype(np.float32)
+        sess = tf.get_default_session()
+        if not self._assigned:
+            self._assign_from_values_fn(sess)
+        result = sess.run(self._feature_op, feed_dict={self._image_placeholder: image})
+        return result
+
+
+extract_vgg_features = _VGGFeaturesExtractor()
+
+
+def vgg_cosine_similarity_np(image0, image1, keep_axis=None):
+    features0 = extract_vgg_features(image0)
+    features1 = extract_vgg_features(image1)
+    csim = 0.0
+    for feature0, feature1 in zip(features0, features1):
+        csim += cosine_similarity_np(feature0, feature1, keep_axis=keep_axis)
+    csim /= len(features0)
     return csim
 
 
-def vgg_cosine_distance_np(image0, image1, keep_axis=None, sess=None):
-    if sess is None:
-        sess = tf.Session()
-        cdist = vgg_cosine_distance(image0, image1, keep_axis=keep_axis)
-        sess.run(tf.global_variables_initializer())
-        vgg_network.vgg_assign_from_values_fn(var_name_prefix='vgg/')(sess)
-    else:
-        cdist = vgg_cosine_distance(image0, image1, keep_axis=keep_axis)
-    cdist = sess.run(cdist)
-    return cdist
+def vgg_cosine_distance_np(image0, image1, keep_axis=None):
+    return 1.0 - vgg_cosine_similarity_np(image0, image1, keep_axis=keep_axis)
 
 
 def gaussian2(size, sigma):
@@ -432,14 +457,16 @@ def test_metrics_equivalence():
     b = np.random.random((10, 16, 64, 64, 3))
     metrics = [mean_squared_error,
                peak_signal_to_noise_ratio,
-               structural_similarity]
+               structural_similarity,
+               vgg_cosine_distance]
     metrics_np = [mean_squared_error_np,
                   peak_signal_to_noise_ratio_np,
-                  structural_similarity_np]
+                  structural_similarity_np,
+                  vgg_cosine_distance_np]
     sess = tf.Session()
+    # this initializes the vgg network for the pure tf (i.e. non-np) metrics
     with tf.variable_scope('vgg'):
         vgg_network.vgg16(tf.placeholder(tf.float32, shape=[None] * 4))
-    sess.run(tf.global_variables_initializer())
     vgg_network.vgg_assign_from_values_fn(var_name_prefix='vgg/')(sess)
 
     for keep_axis in (None, 0, 1, (0, 1)):
@@ -447,10 +474,6 @@ def test_metrics_equivalence():
             m = metric(a, b, keep_axis=keep_axis)
             m_np = metric_np(a, b, keep_axis=keep_axis)
             assert np.allclose(sess.run(m), m_np, atol=1e-7)
-
-        m = vgg_cosine_distance(a, b, keep_axis=keep_axis)
-        m_np = vgg_cosine_distance_np(a, b, keep_axis=keep_axis, sess=sess)
-        assert np.allclose(sess.run(m), m_np)
     print('The test metrics returned the same values.')
 
 
