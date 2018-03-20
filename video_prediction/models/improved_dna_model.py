@@ -7,7 +7,7 @@ from tensorflow.python.util import nest
 from video_prediction import ops, flow_ops
 from video_prediction.models import VideoPredictionModel
 from video_prediction.models import pix2pix_model, mocogan_model, spectral_norm_model
-from video_prediction.ops import lrelu, dense, pad2d, conv2d, upsample_conv2d, conv_pool2d, flatten, tile_concat, pool2d
+from video_prediction.ops import lrelu, dense, pad2d, conv2d, conv_pool2d, flatten, tile_concat, pool2d
 from video_prediction.rnn_ops import BasicConv2DLSTMCell, Conv2DGRUCell
 from video_prediction.utils import tf_utils
 
@@ -363,6 +363,8 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
 
     def call(self, inputs, states):
         norm_layer = ops.get_norm_layer(self.hparams.norm_layer)
+        downsample_layer = ops.get_downsample_layer(self.hparams.downsample_layer)
+        upsample_layer = ops.get_upsample_layer(self.hparams.upsample_layer)
         image_shape = inputs['images'].get_shape().as_list()
         batch_size, height, width, color_channels = image_shape
         conv_rnn_states = states['conv_rnn_states']
@@ -423,7 +425,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                     kernel_size = (3, 3)
                 if self.hparams.where_add == 'all' or (self.hparams.where_add == 'input' and i == 0):
                     h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
-                h = conv_pool2d(h, out_channels, kernel_size=kernel_size, strides=(2, 2))
+                h = downsample_layer(h, out_channels, kernel_size=kernel_size, strides=(2, 2))
                 h = norm_layer(h)
                 h = tf.nn.relu(h)
             if use_conv_rnn:
@@ -446,7 +448,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                     h = tf.concat([layers[-1][-1], layers[num_encoder_layers - i - 1][-1]], axis=-1)
                 if self.hparams.where_add == 'all' or (self.hparams.where_add == 'middle' and i == 0):
                     h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
-                h = upsample_conv2d(h, out_channels, kernel_size=(3, 3), strides=(2, 2))
+                h = upsample_layer(h, out_channels, kernel_size=(3, 3), strides=(2, 2))
                 h = norm_layer(h)
                 h = tf.nn.relu(h)
             if use_conv_rnn:
@@ -675,6 +677,8 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
             d_conditional=True,
             d_use_gt_inputs=True,
             ngf=32,
+            downsample_layer='conv_pool2d',
+            upsample_layer='upsample_conv2d',
             transformation='cdna',
             kernel_size=(5, 5),
             dilation_rate=(1, 1),

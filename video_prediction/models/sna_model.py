@@ -172,7 +172,8 @@ class Prediction_Model(object):
             lstm_size = self.conf['lstm_size']
             print('using lstm size', lstm_size)
         else:
-            lstm_size = np.int32(np.array([16, 32, 64, 32, 16]))
+            ngf = self.conf['ngf']
+            lstm_size = np.int32(np.array([ngf, ngf * 2, ngf * 4, ngf * 2, ngf]))
 
 
         lstm_state1, lstm_state2, lstm_state3, lstm_state4 = None, None, None, None
@@ -619,6 +620,7 @@ def generator_fn(inputs, hparams=None):
     conf = {
         'context_frames': hparams.context_frames,  # of frames before predictions.' ,
         'use_state': 1,  # 'Whether or not to give the state+action to the model' ,
+        'ngf': hparams.ngf,
         'model': hparams.transformation.upper(),  # 'model architecture to use - CDNA, DNA, or STP' ,
         'num_masks': hparams.num_masks,  # 'number of masks, usually 1 for DNA, 10 for CDNA, STN.' ,
         'schedsamp_k': hparams.schedule_sampling_k,  # 'The k hyperparameter for scheduled sampling -1 for no scheduled sampling.' ,
@@ -655,8 +657,9 @@ class SNAVideoPredictionModel(VideoPredictionModel):
             batch_size=32,
             l1_weight=0.0,
             l2_weight=1.0,
+            ngf=16,
             transformation='cdna',
-            kernel_size=(9, 9),
+            kernel_size=(5, 5),
             num_masks=10,
             first_image_background=True,
             generate_scratch_image=True,
