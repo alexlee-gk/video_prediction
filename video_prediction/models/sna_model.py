@@ -328,7 +328,7 @@ class Prediction_Model(object):
                     if 'gen_pix' in self.conf:
                         # Using largest hidden state for predicting a new image layer.
                         enc7 = slim.layers.conv2d_transpose(
-                            enc6, color_channels, 1, stride=1, scope='convt4')
+                            enc6, color_channels, 1, stride=1, scope='convt4', activation_fn=None)
                         # This allows the network to also generate one image from scratch,
                         # which is useful when regions of the image become unoccluded.
                         transformed_l = [tf.nn.sigmoid(enc7)]
