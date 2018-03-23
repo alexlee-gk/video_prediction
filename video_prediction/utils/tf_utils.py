@@ -517,7 +517,8 @@ class PersistentOpEvaluator(object):
             graph = tf.Graph()
             with graph.as_default():
                 self.initialize_graph()
-            self._session = tf.Session(graph=graph)
+            config = tf.ConfigProto(gpu_options=tf.GPUOptions(allow_growth=True))
+            self._session = tf.Session(graph=graph, config=config)
 
     def initialize_graph(self):
         """Create the TensorFlow graph needed to compute this operation.
