@@ -343,7 +343,7 @@ class FlowCell(tf.nn.rnn_cell.RNNCell):
                 gen_pix_distrib = tf.add_n([transformed_pix_distrib * mask
                                             for transformed_pix_distrib, mask in zip(transformed_pix_distribs, masks)])
                 # TODO: is this needed?
-                # gen_pix_distrib /= tf.reduce_sum(gen_pix_distrib, axis=(1, 2), keep_dims=True)
+                # gen_pix_distrib /= tf.reduce_sum(gen_pix_distrib, axis=(1, 2), keepdims=True)
 
         if 'states' in inputs:
             with tf.name_scope('gen_states'):

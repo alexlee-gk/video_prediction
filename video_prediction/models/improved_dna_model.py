@@ -501,7 +501,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             if self.hparams.transformation != 'flow':
                 with tf.name_scope('kernel_normalization'):
                     kernels = tf.nn.relu(kernels - RELU_SHIFT) + RELU_SHIFT
-                    kernels /= tf.reduce_sum(kernels, axis=kernel_spatial_axes, keep_dims=True)
+                    kernels /= tf.reduce_sum(kernels, axis=kernel_spatial_axes, keepdims=True)
 
         if self.hparams.generate_scratch_image:
             with tf.variable_scope('h%d_scratch' % len(layers)):
@@ -579,7 +579,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                 assert len(transformed_pix_distribs) == len(masks)
                 gen_pix_distrib = tf.add_n([transformed_pix_distrib * mask
                                             for transformed_pix_distrib, mask in zip(transformed_pix_distribs, masks)])
-                gen_pix_distrib /= tf.reduce_sum(gen_pix_distrib, axis=(1, 2), keep_dims=True)
+                gen_pix_distrib /= tf.reduce_sum(gen_pix_distrib, axis=(1, 2), keepdims=True)
 
         if 'states' in inputs:
             with tf.name_scope('gen_states'):

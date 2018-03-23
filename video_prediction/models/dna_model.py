@@ -261,7 +261,7 @@ def construct_model(images,
                 pix_distrib_output = mask_list[0] * prev_pix_distrib
                 for layer, mask in zip(transf_distrib, mask_list[1:]):
                     pix_distrib_output += layer * mask
-                pix_distrib_output /= tf.reduce_sum(pix_distrib_output, axis=(1, 2), keep_dims=True)
+                pix_distrib_output /= tf.reduce_sum(pix_distrib_output, axis=(1, 2), keepdims=True)
                 gen_pix_distrib.append(pix_distrib_output)
 
             if int(current_state.get_shape()[1]) == 0:
@@ -330,7 +330,7 @@ def cdna_transformation(prev_image, cdna_input, num_masks, color_channels, kerne
     cdna_kerns = tf.reshape(
         cdna_kerns, [batch_size, kernel_size[0], kernel_size[1], 1, num_masks])
     cdna_kerns = tf.nn.relu(cdna_kerns - RELU_SHIFT) + RELU_SHIFT
-    norm_factor = tf.reduce_sum(cdna_kerns, [1, 2, 3], keep_dims=True)
+    norm_factor = tf.reduce_sum(cdna_kerns, [1, 2, 3], keepdims=True)
     cdna_kerns /= norm_factor
 
     # Treat the color channel dimension as the batch dimension since the same
@@ -388,8 +388,8 @@ def dna_transformation(prev_image, dna_input, kernel_size):
     kernel = tf.nn.relu(dna_input - RELU_SHIFT) + RELU_SHIFT
     kernel = tf.expand_dims(
         kernel / tf.reduce_sum(
-            kernel, [3], keep_dims=True), [4])
-    return tf.reduce_sum(kernel * inputs, [3], keep_dims=False)
+            kernel, [3], keepdims=True), [4])
+    return tf.reduce_sum(kernel * inputs, [3], keepdims=False)
 
 
 def scheduled_sample(ground_truth_x, generated_x, batch_size, num_ground_truth):

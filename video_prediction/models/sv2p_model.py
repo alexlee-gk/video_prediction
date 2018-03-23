@@ -483,7 +483,7 @@ def cdna_transformation(prev_image, cdna_input, num_masks, color_channels):
     cdna_kerns = tf.reshape(
         cdna_kerns, [batch_size, DNA_KERN_SIZE, DNA_KERN_SIZE, 1, num_masks])
     cdna_kerns = tf.nn.relu(cdna_kerns - RELU_SHIFT) + RELU_SHIFT
-    norm_factor = tf.reduce_sum(cdna_kerns, [1, 2, 3], keep_dims=True)
+    norm_factor = tf.reduce_sum(cdna_kerns, [1, 2, 3], keepdims=True)
     cdna_kerns /= norm_factor
 
     # Treat the color channel dimension as the batch dimension since the same
@@ -532,8 +532,8 @@ def dna_transformation(prev_image, dna_input):
     kernel = tf.nn.relu(dna_input - RELU_SHIFT) + RELU_SHIFT
     kernel = tf.expand_dims(
         kernel / tf.reduce_sum(
-            kernel, [3], keep_dims=True), [4])
-    return tf.reduce_sum(kernel * inputs, [3], keep_dims=False)
+            kernel, [3], keepdims=True), [4])
+    return tf.reduce_sum(kernel * inputs, [3], keepdims=False)
 
 
 def scheduled_sample(ground_truth_x, generated_x, batch_size, num_ground_truth):

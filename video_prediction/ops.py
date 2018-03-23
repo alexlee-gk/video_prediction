@@ -908,7 +908,7 @@ def batchnorm(input):
         channels = input.get_shape()[-1]
         offset = tf.get_variable("offset", [channels], dtype=tf.float32, initializer=tf.zeros_initializer())
         scale = tf.get_variable("scale", [channels], dtype=tf.float32, initializer=tf.truncated_normal_initializer(1.0, 0.02))
-        mean, variance = tf.nn.moments(input, axes=list(range(len(input.get_shape()) - 1)), keep_dims=False)
+        mean, variance = tf.nn.moments(input, axes=list(range(len(input.get_shape()) - 1)), keepdims=False)
         variance_epsilon = 1e-5
         normalized = tf.nn.batch_normalization(input, mean, variance, offset, scale, variance_epsilon=variance_epsilon)
         return normalized
@@ -923,7 +923,7 @@ def instancenorm(input):
         offset = tf.get_variable("offset", [channels], dtype=tf.float32, initializer=tf.zeros_initializer())
         scale = tf.get_variable("scale", [channels], dtype=tf.float32,
                                 initializer=tf.truncated_normal_initializer(1.0, 0.02))
-        mean, variance = tf.nn.moments(input, axes=list(range(1, len(input.get_shape()) - 1)), keep_dims=True)
+        mean, variance = tf.nn.moments(input, axes=list(range(1, len(input.get_shape()) - 1)), keepdims=True)
         variance_epsilon = 1e-5
         normalized = tf.nn.batch_normalization(input, mean, variance, offset, scale,
                                                variance_epsilon=variance_epsilon)

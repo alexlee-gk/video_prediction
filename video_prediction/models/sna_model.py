@@ -467,7 +467,7 @@ class Prediction_Model(object):
             pix_distrib_output += mask_list[1] * prev_pix_distrib  # assume pixels don't when image is generated from scratch
         for i in range(self.num_masks):
             pix_distrib_output += transf_distrib[i] * mask_list[i + extra_masks]
-        pix_distrib_output /= tf.reduce_sum(pix_distrib_output, axis=(1, 2), keep_dims=True)
+        pix_distrib_output /= tf.reduce_sum(pix_distrib_output, axis=(1, 2), keepdims=True)
         return pix_distrib_output
 
     ## Utility functions
@@ -527,9 +527,9 @@ class Prediction_Model(object):
         kernel = tf.nn.relu(dna_input - RELU_SHIFT) + RELU_SHIFT
         kernel = tf.expand_dims(
             kernel / tf.reduce_sum(
-                kernel, [3], keep_dims=True), [4])
+                kernel, [3], keepdims=True), [4])
 
-        return tf.reduce_sum(kernel * inputs, [3], keep_dims=False)
+        return tf.reduce_sum(kernel * inputs, [3], keepdims=False)
 
     def cdna_transformation(self, prev_image, cdna_input, reuse_sc=None):
         """Apply convolutional dynamic neural advection to previous image.
@@ -562,7 +562,7 @@ class Prediction_Model(object):
         cdna_kerns = tf.reshape(
             cdna_kerns, [batch_size, DNA_KERN_SIZE, DNA_KERN_SIZE, 1, num_masks])
         cdna_kerns = tf.nn.relu(cdna_kerns - RELU_SHIFT) + RELU_SHIFT
-        norm_factor = tf.reduce_sum(cdna_kerns, [1, 2, 3], keep_dims=True)
+        norm_factor = tf.reduce_sum(cdna_kerns, [1, 2, 3], keepdims=True)
         cdna_kerns /= norm_factor
         cdna_kerns_summary = cdna_kerns
 
