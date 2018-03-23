@@ -93,7 +93,7 @@ class BaseVideoDataset:
         return HParams(**self.get_default_hparams_dict())
 
     def parse_hparams(self, hparams_dict, hparams):
-        parsed_hparams = self.get_default_hparams().set_from_map(hparams_dict or {})
+        parsed_hparams = self.get_default_hparams().override_from_dict(hparams_dict or {})
         if hparams:
             if not isinstance(hparams, (list, tuple)):
                 hparams = [hparams]
