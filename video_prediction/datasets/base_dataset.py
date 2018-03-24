@@ -177,6 +177,45 @@ class BaseVideoDataset:
         images = tf.image.convert_image_dtype(images, dtype=tf.float32)
         return images
 
+    def slice_sequences(self, state_like_seqs, action_like_seqs, example_sequence_length):
+        """
+        Slices sequences of length `example_sequence_length` into subsequences
+        of length `sequence_length`. The dicts of sequences are updated
+        in-place and the same dicts are returned.
+        """
+        # handle random shifting and frame skip
+        sequence_length = self.hparams.sequence_length  # desired sequence length
+        frame_skip = self.hparams.frame_skip
+        time_shift = self.hparams.time_shift
+        if (time_shift and self.mode == 'train') or self.hparams.force_time_shift:
+            assert time_shift > 0 and isinstance(time_shift, int)
+            if isinstance(example_sequence_length, tf.Tensor):
+                example_sequence_length = tf.cast(example_sequence_length, tf.int32)
+            num_shifts = ((example_sequence_length - 1) - (sequence_length - 1) * (frame_skip + 1)) // time_shift
+            assert_message = ('example_sequence_length has to be at least %d when '
+                              'sequence_length=%d, frame_skip=%d.' %
+                              ((sequence_length - 1) * (frame_skip + 1) + 1,
+                               sequence_length, frame_skip))
+            with tf.control_dependencies([tf.assert_greater_equal(num_shifts, 0,
+                    data=[example_sequence_length, num_shifts], message=assert_message)]):
+                t_start = tf.random_uniform([], 0, num_shifts + 1, dtype=tf.int32, seed=self.seed) * time_shift
+        else:
+            t_start = 0
+        state_like_t_slice = slice(t_start, t_start + (sequence_length - 1) * (frame_skip + 1) + 1, frame_skip + 1)
+        action_like_t_slice = slice(t_start, t_start + (sequence_length - 1) * (frame_skip + 1))
+
+        for example_name, seq in state_like_seqs.items():
+            seq = tf.convert_to_tensor(seq)[state_like_t_slice]
+            seq.set_shape([sequence_length] + seq.shape.as_list()[1:])
+            state_like_seqs[example_name] = seq
+        for example_name, seq in action_like_seqs.items():
+            seq = tf.convert_to_tensor(seq)[action_like_t_slice]
+            seq.set_shape([(sequence_length - 1) * (frame_skip + 1)] + seq.shape.as_list()[1:])
+            # concatenate actions of skipped frames into single macro actions
+            seq = tf.reshape(seq, [sequence_length - 1, -1])
+            action_like_seqs[example_name] = seq
+        return state_like_seqs, action_like_seqs
+
     def num_examples_per_epoch(self):
         raise NotImplementedError
 
@@ -297,36 +336,8 @@ class VideoDataset(BaseVideoDataset):
         _, image_shape = self.state_like_names_and_shapes['images']
         state_like_seqs['images'] = self.decode_and_preprocess_images(state_like_seqs['images'], image_shape)
 
-        # handle random shifting and frame skip
-        sequence_length = self.hparams.sequence_length
-        frame_skip = self.hparams.frame_skip
-        time_shift = self.hparams.time_shift
-        if (time_shift and self.mode == 'train') or self.hparams.force_time_shift:
-            assert time_shift > 0 and isinstance(time_shift, int)
-            num_shifts = ((self._max_sequence_length - 1) - (sequence_length - 1) * (frame_skip + 1)) // time_shift
-            if num_shifts < 0:
-                raise ValueError('max_sequence_length has to be at least %d when '
-                                 'sequence_length=%d, frame_skip=%d, but '
-                                 'instead it is %d' %
-                                 ((sequence_length - 1) * (frame_skip + 1) + 1,
-                                  sequence_length, frame_skip, self._max_sequence_length))
-            t_start = tf.random_uniform([], 0, num_shifts + 1, dtype=tf.int32, seed=self.seed) * time_shift
-        else:
-            t_start = 0
-        state_like_t_slice = slice(t_start, t_start + (sequence_length - 1) * (frame_skip + 1) + 1, frame_skip + 1)
-        action_like_t_slice = slice(t_start, t_start + (sequence_length - 1) * (frame_skip + 1))
-
-        for example_name, seq in state_like_seqs.items():
-            seq = tf.stack(seq)[state_like_t_slice]
-            seq.set_shape([sequence_length] + seq.shape.as_list()[1:])
-            state_like_seqs[example_name] = seq
-        for example_name, seq in action_like_seqs.items():
-            seq = tf.stack(seq)[action_like_t_slice]
-            seq.set_shape([(sequence_length - 1) * (frame_skip + 1)] + seq.shape.as_list()[1:])
-            # concatenate actions of skipped frames into single macro actions
-            seq = tf.reshape(seq, [sequence_length - 1, -1])
-            action_like_seqs[example_name] = seq
-
+        state_like_seqs, action_like_seqs = \
+            self.slice_sequences(state_like_seqs, action_like_seqs, self._max_sequence_length)
         return state_like_seqs, action_like_seqs
 
 
@@ -366,35 +377,8 @@ class SequenceExampleVideoDataset(BaseVideoDataset):
             example_sequence_length.append(tf.shape(seq)[0] + 1)
         example_sequence_length = tf.reduce_min(example_sequence_length)
 
-        # handle random shifting and frame skip
-        sequence_length = self.hparams.sequence_length
-        frame_skip = self.hparams.frame_skip
-        time_shift = self.hparams.time_shift
-        if (time_shift and self.mode == 'train') or self.hparams.force_time_shift:
-            assert time_shift > 0 and isinstance(time_shift, int)
-            num_shifts = ((example_sequence_length - 1) - (sequence_length - 1) * (frame_skip + 1)) // time_shift
-            assert_message = ('example_sequence_length has to be at least %d when '
-                              'sequence_length=%d, frame_skip=%d.' %
-                              ((sequence_length - 1) * (frame_skip + 1) + 1,
-                               sequence_length, frame_skip))
-            with tf.control_dependencies([tf.assert_greater_equal(num_shifts, 0,
-                    data=[example_sequence_length, num_shifts], message=assert_message)]):
-                t_start = tf.random_uniform([], 0, num_shifts + 1, dtype=tf.int32, seed=self.seed) * time_shift
-        else:
-            t_start = 0
-        state_like_t_slice = slice(t_start, t_start + (sequence_length - 1) * (frame_skip + 1) + 1, frame_skip + 1)
-        action_like_t_slice = slice(t_start, t_start + (sequence_length - 1) * (frame_skip + 1))
-
-        for example_name, seq in state_like_seqs.items():
-            seq = tf.stack(seq)[state_like_t_slice]
-            seq.set_shape([sequence_length] + seq.shape.as_list()[1:])
-            state_like_seqs[example_name] = seq
-        for example_name, seq in action_like_seqs.items():
-            seq = tf.stack(seq)[action_like_t_slice]
-            seq.set_shape([(sequence_length - 1) * (frame_skip + 1)] + seq.shape.as_list()[1:])
-            # concatenate actions of skipped frames into single macro actions
-            seq = tf.reshape(seq, [sequence_length - 1, -1])
-            action_like_seqs[example_name] = seq
+        state_like_seqs, action_like_seqs = \
+            self.slice_sequences(state_like_seqs, action_like_seqs, example_sequence_length)
 
         # decode and preprocess images on the sampled slice only
         _, image_shape = self.state_like_names_and_shapes['images']
@@ -441,35 +425,8 @@ class VarLenFeatureVideoDataset(BaseVideoDataset):
             seq = tf.reshape(seq, [example_sequence_length - 1] + list(shape))
             action_like_seqs[example_name] = seq
 
-        # handle random shifting and frame skip
-        sequence_length = self.hparams.sequence_length
-        frame_skip = self.hparams.frame_skip
-        time_shift = self.hparams.time_shift
-        if (time_shift and self.mode == 'train') or self.hparams.force_time_shift:
-            assert time_shift > 0 and isinstance(time_shift, int)
-            num_shifts = ((example_sequence_length - 1) - (sequence_length - 1) * (frame_skip + 1)) // time_shift
-            assert_message = ('example_sequence_length has to be at least %d when '
-                              'sequence_length=%d, frame_skip=%d.' %
-                              ((sequence_length - 1) * (frame_skip + 1) + 1,
-                               sequence_length, frame_skip))
-            with tf.control_dependencies([tf.assert_greater_equal(num_shifts, tf.cast(0, num_shifts.dtype),
-                    data=[example_sequence_length, num_shifts], message=assert_message)]):
-                t_start = tf.random_uniform([], 0, num_shifts + 1, dtype=num_shifts.dtype, seed=self.seed) * time_shift
-        else:
-            t_start = 0
-        state_like_t_slice = slice(t_start, t_start + (sequence_length - 1) * (frame_skip + 1) + 1, frame_skip + 1)
-        action_like_t_slice = slice(t_start, t_start + (sequence_length - 1) * (frame_skip + 1))
-
-        for example_name, seq in state_like_seqs.items():
-            seq = seq[state_like_t_slice]
-            seq.set_shape([sequence_length] + seq.shape.as_list()[1:])
-            state_like_seqs[example_name] = seq
-        for example_name, seq in action_like_seqs.items():
-            seq = seq[action_like_t_slice]
-            seq.set_shape([(sequence_length - 1) * (frame_skip + 1)] + seq.shape.as_list()[1:])
-            # concatenate actions of skipped frames into single macro actions
-            seq = tf.reshape(seq, [sequence_length - 1, -1])
-            action_like_seqs[example_name] = seq
+        state_like_seqs, action_like_seqs = \
+            self.slice_sequences(state_like_seqs, action_like_seqs, example_sequence_length)
 
         # decode and preprocess images on the sampled slice only
         _, image_shape = self.state_like_names_and_shapes['images']
