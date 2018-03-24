@@ -1,4 +1,5 @@
 import argparse
+import errno
 import itertools
 import json
 import math
@@ -103,6 +104,8 @@ def main():
     model_hparams_dict = {}
     if args.checkpoint:
         checkpoint_dir = os.path.normpath(args.checkpoint)
+        if not os.path.exists(checkpoint_dir):
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), checkpoint_dir)
         if not os.path.isdir(args.checkpoint):
             checkpoint_dir, _ = os.path.split(checkpoint_dir)
         with open(os.path.join(checkpoint_dir, "options.json")) as f:
@@ -183,7 +186,7 @@ def main():
 
     logdir = args.output_dir if args.summary_freq or args.image_summary_freq or args.eval_summary_freq else None
 
-    saver = tf.train.Saver(max_to_keep=2)
+    saver = tf.train.Saver(max_to_keep=3)
     summaries = tf.get_collection(tf.GraphKeys.SUMMARIES)
     image_summaries = set(tf.get_collection(tf_utils.IMAGE_SUMMARIES))
     eval_summaries = set(tf.get_collection(tf_utils.EVAL_SUMMARIES))
