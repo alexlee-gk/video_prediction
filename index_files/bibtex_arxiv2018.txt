@@ -1,0 +1,6 @@
+@article{lee2018savp,
+  title={Stochastic Adversarial Video Prediction},
+  author={Alex X. Lee and Richard Zhang and Frederik Ebert and Pieter Abbeel and Chelsea Finn and Sergey Levine},
+  journal={arXiv preprint arXiv:1804.01523},
+  year={2018}
+}
