@@ -23,6 +23,7 @@ class UCF101VideoDataset(VarLenFeatureVideoDataset):
             context_frames=4,
             sequence_length=12,
             random_crop_size=64,
+            use_state=False,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
