@@ -45,7 +45,6 @@ def main():
 
     parser.add_argument("--num_gpus", type=int, default=1)
     parser.add_argument("--gpu_mem_frac", type=float, default=0, help="fraction of gpu memory to use")
-    parser.add_argument("--force_gpu_compatible", type=strtobool, default=0, help="fraction of gpu memory to use")
     parser.add_argument("--seed", type=int)
 
     args = parser.parse_args()
@@ -185,8 +184,7 @@ def main():
     if args.summary_freq or args.image_summary_freq or args.eval_summary_freq:
         summary_writer = tf.summary.FileWriter(args.output_dir)
 
-    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=args.gpu_mem_frac,
-                                force_gpu_compatible=args.force_gpu_compatible)
+    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=args.gpu_mem_frac)
     config = tf.ConfigProto(gpu_options=gpu_options, allow_soft_placement=True)
     global_step = tf.train.get_or_create_global_step()
 
