@@ -18,37 +18,35 @@ from video_prediction.utils import ffmpeg_gif, tf_utils
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_dir", type=str, required=True, help="either a directory containing subdirectories train,"
-                                                                     "val, test, etc, or a directory containing the tfrecords")
+    parser.add_argument("--input_dir", type=str, required=True, help="either a directory containing subdirectories "
+                                                                     "train, val, test, etc, or a directory containing "
+                                                                     "the tfrecords")
     parser.add_argument("--val_input_dirs", type=str, nargs='+', help="directories containing the tfrecords. default: [input_dir]")
-    parser.add_argument("--output_dir", default=None, help="where to put output files")
-    parser.add_argument("--logs_dir", default='logs')
-    parser.add_argument("--seed", type=int)
-    parser.add_argument("--checkpoint",
-                        help="directory with checkpoint or checkpoint name (e.g. checkpoint_dir/model-200000) "
-                             "to resume training from or use for testing. Can specify multiple checkpoints. "
-                             "If more than one checkpoint is provided, the global step from the checkpoints "
-                             "are not restored.")
+    parser.add_argument("--logs_dir", default='logs', help="ignored if output_dir is specified")
+    parser.add_argument("--output_dir", help="output directory where json files, summary, model, gifs, etc are saved. "
+                                             "default is logs_dir/model_fname, where model_fname consists of "
+                                             "information from model and model_hparams")
+    parser.add_argument("--checkpoint", help="directory with checkpoint or checkpoint name (e.g. checkpoint_dir/model-200000)")
     parser.add_argument("--resume", action='store_true', help='resume from lastest checkpoint in output_dir.')
 
-    parser.add_argument("--max_steps", type=int, help="number of training steps (0 to disable)")
-    parser.add_argument("--max_epochs", type=int, help="number of training epochs")
-    parser.add_argument("--summary_freq", type=int, default=None, help="update summaries (except for image and eval summaries) every summary_freq steps")
-    parser.add_argument("--image_summary_freq", type=int, default=None, help="update image summaries every image_summary_freq steps")
-    parser.add_argument("--eval_summary_freq", type=int, default=None, help="update eval summaries every eval_summary_freq steps")
-    parser.add_argument("--progress_freq", type=int, default=None, help="display progress every progress_freq steps")
-    parser.add_argument("--metrics_freq", type=int, default=None)
-    parser.add_argument("--gif_freq", type=int, default=None)
-    parser.add_argument("--save_freq", type=int, default=None, help="save model every save_freq steps, 0 to disable")
-    parser.add_argument("--more_freq_defaults", type=int, default=1, help="multiplier for default logging frequencies")
-
-    parser.add_argument("--num_gpus", type=int, default=1)
-    parser.add_argument("--gpu_mem_frac", type=float, default=0, help="fraction of gpu memory to use")
-    parser.add_argument("--force_gpu_compatible", type=strtobool, default=0, help="fraction of gpu memory to use")
     parser.add_argument("--dataset", type=str, help="dataset class name")
     parser.add_argument("--dataset_hparams", type=str, help="a string of comma separated list of dataset hyperparameters")
     parser.add_argument("--model", type=str, help="model class name")
     parser.add_argument("--model_hparams", type=str, help="a string of comma separated list of model hyperparameters")
+    parser.add_argument("--max_steps", type=int, default=300000, help="number of training steps (0 to disable)")
+
+    parser.add_argument("--summary_freq", type=int, default=1000, help="save summaries (except for image and eval summaries) every summary_freq steps")
+    parser.add_argument("--image_summary_freq", type=int, default=5000, help="save image summaries every image_summary_freq steps")
+    parser.add_argument("--eval_summary_freq", type=int, default=50000, help="save eval summaries every eval_summary_freq steps")
+    parser.add_argument("--progress_freq", type=int, default=100, help="display progress every progress_freq steps")
+    parser.add_argument("--metrics_freq", type=int, default=0, help="run and display metrics every metrics_freq step")
+    parser.add_argument("--gif_freq", type=int, default=0, help="save gifs of predicted frames every gif_freq steps")
+    parser.add_argument("--save_freq", type=int, default=5000, help="save model every save_freq steps, 0 to disable")
+
+    parser.add_argument("--num_gpus", type=int, default=1)
+    parser.add_argument("--gpu_mem_frac", type=float, default=0, help="fraction of gpu memory to use")
+    parser.add_argument("--force_gpu_compatible", type=strtobool, default=0, help="fraction of gpu memory to use")
+    parser.add_argument("--seed", type=int)
 
     args = parser.parse_args()
 
@@ -57,21 +55,6 @@ def main():
         assert args.num_gpus == 0
     else:
         assert len(cuda_visible_devices.split(',')) == args.num_gpus
-
-    if args.summary_freq is None:
-        args.summary_freq = 1000 // args.more_freq_defaults
-    if args.image_summary_freq is None:
-        args.image_summary_freq = 5000 // args.more_freq_defaults
-    if args.eval_summary_freq is None:
-        args.eval_summary_freq = 50000 // args.more_freq_defaults
-    if args.progress_freq is None:
-        args.progress_freq = 100 // args.more_freq_defaults
-    if args.metrics_freq is None:
-        args.metrics_freq = 0 // args.more_freq_defaults
-    if args.gif_freq is None:
-        args.gif_freq = 0 // args.more_freq_defaults
-    if args.save_freq is None:
-        args.save_freq = 5000 // args.more_freq_defaults
 
     if args.seed is not None:
         tf.set_random_seed(args.seed)
@@ -117,7 +100,7 @@ def main():
             with open(os.path.join(checkpoint_dir, "dataset_hparams.json")) as f:
                 dataset_hparams_dict = json.loads(f.read())
         except FileNotFoundError:
-            print("model_hparams.json was not loaded because it does not exist")
+            print("dataset_hparams.json was not loaded because it does not exist")
         try:
             with open(os.path.join(checkpoint_dir, "model_hparams.json")) as f:
                 model_hparams_dict = json.loads(f.read())
@@ -137,9 +120,9 @@ def main():
                     for val_input_dir in val_input_dirs]
     if len(val_input_dirs) > 1:
         if isinstance(val_datasets[-1], datasets.KTHVideoDataset):
-            val_datasets[-1].set_sequence_length(35)
+            val_datasets[-1].set_sequence_length(40)
         else:
-            val_datasets[-1].set_sequence_length(0)
+            val_datasets[-1].set_sequence_length(30)
 
     def override_hparams_dict(dataset):
         hparams_dict = dict(model_hparams_dict)
@@ -184,8 +167,6 @@ def main():
     with tf.name_scope("parameter_count"):
         parameter_count = tf.reduce_sum([tf.reduce_prod(tf.shape(v)) for v in tf.trainable_variables()])
 
-    logdir = args.output_dir if args.summary_freq or args.image_summary_freq or args.eval_summary_freq else None
-
     saver = tf.train.Saver(max_to_keep=3)
     summaries = tf.get_collection(tf.GraphKeys.SUMMARIES)
     image_summaries = set(tf.get_collection(tf_utils.IMAGE_SUMMARIES))
@@ -201,8 +182,8 @@ def main():
         eval_summary_op = tf.summary.merge(list(eval_summaries))
         eval_image_summary_op = tf.summary.merge(list(eval_image_summaries))
 
-    # sv = tf.train.Supervisor(logdir=logdir, save_summaries_secs=0, saver=None)
-    summary_writer = tf.summary.FileWriter(logdir)
+    if args.summary_freq or args.image_summary_freq or args.eval_summary_freq:
+        summary_writer = tf.summary.FileWriter(args.output_dir)
 
     gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=args.gpu_mem_frac,
                                 force_gpu_compatible=args.force_gpu_compatible)
@@ -210,33 +191,20 @@ def main():
     global_step = tf.train.get_or_create_global_step()
 
     with tf.Session(config=config) as sess:
-    # with sv.managed_session(config=config) as sess:
         print("parameter_count =", sess.run(parameter_count))
 
         sess.run(tf.global_variables_initializer())
-
         train_model.restore(sess, args.checkpoint)
-
-        # training
-        max_steps = 2 ** 32
-        if args.max_epochs is not None:
-            steps_per_epoch = math.ceil(train_dataset.num_examples_per_epoch() / batch_size)
-            max_steps = args.max_epochs * steps_per_epoch
-        if args.max_steps is not None:
-            max_steps = args.max_steps
 
         start_step = sess.run(global_step)
         # start at one step earlier to log everything without doing any training
         # step is relative to the start_step
-        for step in range(-1, max_steps - start_step):
+        for step in range(-1, args.max_steps - start_step):
             if step == 0:
                 start = time.time()
 
-            # if sv.should_stop():
-            #     break
-
             def should(freq):
-                return freq and ((step + 1) % freq == 0 or (step + 1) in (0, max_steps - start_step))
+                return freq and ((step + 1) % freq == 0 or (step + 1) in (0, args.max_steps - start_step))
 
             fetches = {"global_step": global_step}
             if step >= 0:
@@ -290,7 +258,7 @@ def main():
                     elapsed_time = time.time() - start
                     average_time = elapsed_time / (step + 1)
                     images_per_sec = batch_size / average_time
-                    remaining_time = (max_steps - (start_step + step)) * average_time
+                    remaining_time = (args.max_steps - (start_step + step)) * average_time
                     print("          image/sec %0.1f  remaining %dm (%0.1fh) (%0.1fd)" %
                           (images_per_sec, remaining_time / 60, remaining_time / 60 / 60, remaining_time / 60 / 60 / 24))
 
@@ -319,9 +287,6 @@ def main():
                     print("saving gif to", os.path.join(image_dir, filename))
                     ffmpeg_gif.save_gif(os.path.join(image_dir, filename), clip, fps=4)
                     print("done")
-
-            # if sv.should_stop():
-            #     break
 
 
 if __name__ == '__main__':

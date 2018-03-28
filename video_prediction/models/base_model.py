@@ -194,6 +194,8 @@ class BaseVideoPredictionModel:
         vgg_network.vgg_assign_from_values_fn()(sess)
 
         if checkpoints:
+            # possibly restore from multiple checkpoints. useful if subset of weights
+            # (e.g. generator or discriminator) are on different checkpoints.
             if not isinstance(checkpoints, (list, tuple)):
                 checkpoints = [checkpoints]
             # automatically skip global_step if more than one checkpoint is provided
