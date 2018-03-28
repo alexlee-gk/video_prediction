@@ -347,7 +347,7 @@ def construct_model(images,
                 if hparams.multi_latent:
                     latent = samples[t]
                 if outputs_enc is not None:  # equivalent to not inference_time
-                    latent = tf.cond(iter_num < hparams.kl_anneal_steps[0],  # equivalent to num_iterations_1st_stage
+                    latent = tf.cond(iter_num < hparams.num_iterations_1st_stage,
                                      lambda: tf.identity(latent),
                                      lambda: latent_mean + tf.exp(latent_std / 2.0) * latent)
                 with tf.control_dependencies([latent]):
@@ -593,6 +593,13 @@ def generator_fn(inputs, outputs_enc=None, hparams=None):
 
 
 class SV2PVideoPredictionModel(VideoPredictionModel):
+    """
+    Stochastic Variational Video Prediction
+    https://arxiv.org/abs/1710.11252
+
+    Reference implementation:
+    https://github.com/mbz/models/tree/master/research/video_prediction
+    """
     def __init__(self, *args, **kwargs):
         super(SV2PVideoPredictionModel, self).__init__(
             generator_fn, encoder_fn=encoder_fn, *args, ** kwargs)
@@ -605,7 +612,7 @@ class SV2PVideoPredictionModel(VideoPredictionModel):
         hparams = dict(
             l1_weight=0.0,
             l2_weight=1.0,
-            kl_weight=8 * 1e-3,  # equivalent to latent_loss_multiplier up to a factor
+            kl_weight=1e-3 * 10 * 8,  # equivalent to latent_loss_multiplier up to a factor (see below)
             transformation='cdna',
             num_masks=10,
             schedule_sampling_k=900.0,
@@ -613,13 +620,18 @@ class SV2PVideoPredictionModel(VideoPredictionModel):
             multi_latent=False,
             latent_std_min=-5.0,
             latent_channels=1,
+            num_iterations_1st_stage=100000,
+            kl_anneal_steps=(200000, 220000),
+            decay_steps=(0, 0),  # do not decay the learning rate (doing so produces blurrier images)
         )
         # Notes on equivalence with reference implementation:
-        # kl_weight is equivalent to latent_loss_multiplier * (width // 8) / latent_channels
+        # kl_weight is equivalent to latent_loss_multiplier * time_factor * factor, where
+        # time_factor = (sequence_length - context_frames) since the reference implementation
+        # doesn't normalize the kl divergence over time, and factor = (width // 8) / latent_channels
         # since the reference implementation's kl_divergence sums over axis=1 instead of axis=-1.
-        # kl_anneal_steps is equivalent to (num_iterations_1st_stage, num_iterations_1st_stage +
-        # num_iterations_2nd_stage). The reference implementation abruptly changes the kl_weight,
-        # whereas in here we anneal it linearly as described in the paper.
+        # The paper and the reference implementation differs in the annealing of the kl_weight.
+        # Based on Figure 4 and the Appendix, it seems that in the 3rd stage, the kl_weight is
+        # linearly increased for the first 20k iterations of this stage.
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
     def parse_hparams(self, hparams_dict, hparams):
