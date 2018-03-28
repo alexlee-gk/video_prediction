@@ -610,6 +610,7 @@ class SV2PVideoPredictionModel(VideoPredictionModel):
     def get_default_hparams_dict(self):
         default_hparams = super(SV2PVideoPredictionModel, self).get_default_hparams_dict()
         hparams = dict(
+            batch_size=32,
             l1_weight=0.0,
             l2_weight=1.0,
             kl_weight=1e-3 * 10 * 8,  # equivalent to latent_loss_multiplier up to a factor (see below)
