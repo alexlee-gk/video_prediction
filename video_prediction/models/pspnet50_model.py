@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 
 from video_prediction import ops, flow_ops
-from video_prediction.models.improved_dna_model import apply_kernels, identity_kernel
+from video_prediction.models.savp_model import apply_kernels, identity_kernel
 from video_prediction.ops import conv2d, tile_concat, flatten
 from video_prediction.ops import dense, upsample_conv2d, conv_pool2d
 from video_prediction.rnn_ops import BasicConv2DLSTMCell, Conv2DGRUCell

@@ -654,9 +654,9 @@ def generator_fn(inputs, outputs_enc=None, hparams=None):
     return gen_images, outputs
 
 
-class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
+class SAVPVideoPredictionModel(VideoPredictionModel):
     def __init__(self, *args, **kwargs):
-        super(ImprovedDNAVideoPredictionModel, self).__init__(
+        super(SAVPVideoPredictionModel, self).__init__(
             generator_fn, discriminator_fn, encoder_fn, *args, **kwargs)
         if self.hparams.e_net == 'none' or self.hparams.nz == 0:
             self.encoder_fn = None
@@ -665,7 +665,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
         self.deterministic = not self.hparams.nz
 
     def get_default_hparams_dict(self):
-        default_hparams = super(ImprovedDNAVideoPredictionModel, self).get_default_hparams_dict()
+        default_hparams = super(SAVPVideoPredictionModel, self).get_default_hparams_dict()
         hparams = dict(
             l1_weight=1.0,
             l2_weight=0.0,
@@ -706,7 +706,7 @@ class ImprovedDNAVideoPredictionModel(VideoPredictionModel):
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
     def parse_hparams(self, hparams_dict, hparams):
-        hparams = super(ImprovedDNAVideoPredictionModel, self).parse_hparams(hparams_dict, hparams)
+        hparams = super(SAVPVideoPredictionModel, self).parse_hparams(hparams_dict, hparams)
         if self.mode == 'test':
             def override_hparams_maybe(name, value):
                 orig_value = hparams.values()[name]
