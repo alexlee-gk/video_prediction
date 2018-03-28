@@ -399,26 +399,12 @@ def reduce_tensors(structures, shallow=False):
     return reduced_structure
 
 
-def NewCheckpointReader(checkpoint):
-    # tf.pywrap_tensorflow.NewCheckpointReader doesn't work when the path has
-    # special characters, so create a symlinked directory just for opening
-    # the checkpoint reader.
-    dirname, fname = os.path.split(checkpoint)
-    with tempfile.NamedTemporaryFile() as f:
-        tmp_dirname = f.name
-    os.symlink(os.path.abspath(dirname), tmp_dirname)
-    tmp_checkpoint = os.path.join(tmp_dirname, fname)
-    checkpoint_reader = tf.pywrap_tensorflow.NewCheckpointReader(tmp_checkpoint)
-    return checkpoint_reader, tmp_checkpoint
-
-
 def get_checkpoint_restore_saver(checkpoint, skip_global_step=False, restore_to_checkpoint_mapping=None,
                                  restore_scope=None):
     if os.path.isdir(checkpoint):
         # latest_checkpoint doesn't work when the path has special characters
-        # checkpoint = tf.train.latest_checkpoint(checkpoint)
-        checkpoint = tf.train.get_checkpoint_state(checkpoint).model_checkpoint_path
-    checkpoint_reader, checkpoint = NewCheckpointReader(checkpoint)
+        checkpoint = tf.train.latest_checkpoint(checkpoint)
+    checkpoint_reader = tf.pywrap_tensorflow.NewCheckpointReader(checkpoint)
     checkpoint_var_names = checkpoint_reader.get_variable_to_shape_map().keys()
     restore_to_checkpoint_mapping = restore_to_checkpoint_mapping or (lambda name: name.split(':')[0])
     restore_vars = {restore_to_checkpoint_mapping(var.name): var
