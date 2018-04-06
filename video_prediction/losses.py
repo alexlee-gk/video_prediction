@@ -26,6 +26,8 @@ def gan_loss(logits, labels, gan_loss_type):
         # gen_loss = tf.reduce_mean(tf.square(predict_fake - 1))
         loss = tf.reduce_mean(tf.square(logits - labels))
     elif gan_loss_type == 'SNGAN':
+        # this is the form of the loss used in the official implementation of the SNGAN paper, but it leads to
+        # worse results in our video prediction experiments
         if labels == 0.0:
             loss = tf.reduce_mean(tf.nn.softplus(logits))
         elif labels == 1.0:
@@ -37,9 +39,6 @@ def gan_loss(logits, labels, gan_loss_type):
     return loss
 
 
-def kl_loss(mu, log_sigma_sq, clip=False):
-    if clip:
-        sigma_sq = tf.exp(tf.clip_by_value(log_sigma_sq, -10, 10))
-    else:
-        sigma_sq = tf.exp(log_sigma_sq)
+def kl_loss(mu, log_sigma_sq):
+    sigma_sq = tf.exp(log_sigma_sq)
     return -0.5 * tf.reduce_mean(tf.reduce_sum(1 + log_sigma_sq - tf.square(mu) - sigma_sq, axis=-1))
