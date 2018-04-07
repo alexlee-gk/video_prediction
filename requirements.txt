@@ -1,5 +1,5 @@
-tensorflow-gpu==1.6.0
-opencv-python==3.2.0.8
+tensorflow-gpu>=1.5.0
+opencv-python
 scipy
 scikit-image
 h5py
