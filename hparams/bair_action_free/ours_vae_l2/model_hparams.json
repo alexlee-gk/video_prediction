@@ -1,0 +1,12 @@
+{
+    "batch_size": 32,
+    "lr": 0.001,
+    "beta1": 0.9,
+    "beta2": 0.999,
+    "l1_weight": 0.0,
+    "l2_weight": 1.0,
+    "kl_weight": 0.001,
+    "video_sn_vae_gan_weight": 0.0,
+    "video_sn_gan_weight": 0.0,
+    "state_weight": 0.0
+}
