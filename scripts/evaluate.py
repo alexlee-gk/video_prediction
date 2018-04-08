@@ -1,5 +1,6 @@
 import argparse
 import csv
+import errno
 import json
 import os
 import random
@@ -248,37 +249,46 @@ def main():
     ├── output_dir                              # condition / method
     │   ├── prediction                          # task
     │   │   ├── inputs
-    │   │   │   ├── context_image_00000_00.jpg  # indexed by sample index and time step
+    │   │   │   ├── context_image_00000_00.png  # indexed by sample index and time step
     │   │   │   └── ...
     │   │   ├── outputs
-    │   │   │   ├── gen_image_00000_00.jpg      # predicted images (only the ones in the loss)
+    │   │   │   ├── gen_image_00000_00.png      # predicted images (only the ones in the loss)
     │   │   │   └── ...
     │   │   └── metrics
     │   │       ├── psnr.csv
     │   │       ├── mse.csv
     │   │       └── ssim.csv
-    │   ├── servo
+    │   ├── prediction_eval_vgg_csim_max        # task: best sample in terms of VGG cosine similarity
     │   │   ├── inputs
-    │   │   │   ├── context_image_00000_00.jpg
-    │   │   │   ├── ...
-    │   │   │   ├── goal_image_00000_00.jpg     # only one goal image per sample
+    │   │   │   ├── context_image_00000_00.png  # indexed by sample index and time step
     │   │   │   └── ...
     │   │   ├── outputs
-    │   │   │   ├── gen_image_00000_00.jpg
+    │   │   │   ├── gen_image_00000_00.png      # predicted images (only the ones in the loss)
+    │   │   │   └── ...
+    │   │   └── metrics
+    │   │       └── vgg_csim.csv
+    │   ├── servo
+    │   │   ├── inputs
+    │   │   │   ├── context_image_00000_00.png
     │   │   │   ├── ...
-    │   │   │   ├── gen_image_goal_diff_00000_00.jpg
+    │   │   │   ├── goal_image_00000_00.png     # only one goal image per sample
+    │   │   │   └── ...
+    │   │   ├── outputs
+    │   │   │   ├── gen_image_00000_00.png
+    │   │   │   ├── ...
+    │   │   │   ├── gen_image_goal_diff_00000_00.png
     │   │   │   └── ...
     │   │   └── metrics
     │   │       ├── action_mse.csv
     │   │       └── goal_image_mse.csv
     │   ├── motion
     │   │   ├── inputs
-    │   │   │   ├── pix_distrib_00000_00.jpg
+    │   │   │   ├── pix_distrib_00000_00.png
     │   │   │   └── ...
     │   │   ├── outputs
-    │   │   │   ├── gen_pix_distrib_00000_00.jpg
+    │   │   │   ├── gen_pix_distrib_00000_00.png
     │   │   │   ├── ...
-    │   │   │   ├── gen_pix_distrib_overlaid_00000_00.jpg
+    │   │   │   ├── gen_pix_distrib_overlaid_00000_00.png
     │   │   │   └── ...
     │   │   └── metrics
     │   │       └── pix_dist.csv
@@ -286,41 +296,38 @@ def main():
     └── ...
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_dir", type=str, required=True, help="either a directory containing subdirectories train,"
-                                                                     "val, test, etc, or a directory containing the tfrecords")
-    parser.add_argument("--output_dir", default=None, help="where to put output files")
-    parser.add_argument("--results_dir", type=str, default='results')
-    parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--checkpoint", type=str,
-                        help="directory with checkpoint or checkpoint name (e.g. checkpoint_dir/model-200000) "
-                             "to resume training from or use for testing. Can specify multiple checkpoints. "
-                             "If more than one checkpoint is provided, the global step from the checkpoints "
-                             "are not restored.")
-    parser.add_argument("--mode", type=str, choices=['val', 'test'], default='val')
+    parser.add_argument("--input_dir", type=str, required=True, help="either a directory containing subdirectories "
+                                                                     "train, val, test, etc, or a directory containing "
+                                                                     "the tfrecords")
+    parser.add_argument("--results_dir", type=str, default='results', help="ignored if output_dir is specified")
+    parser.add_argument("--output_dir", help="output directory where results are saved. default is results_dir/model_fname, "
+                                             "where model_fname is the directory name of checkpoint")
+    parser.add_argument("--checkpoint", help="directory with checkpoint or checkpoint name (e.g. checkpoint_dir/model-200000)")
 
-    parser.add_argument("--batch_size", type=int, default=16, help="number of samples in batch")
-    parser.add_argument("--num_samples", type=int, help="number of samples for the table of sequence (all of them by default)")
+    parser.add_argument("--mode", type=str, choices=['val', 'test'], default='val', help='mode for dataset, val or test.')
 
-    parser.add_argument("--num_gpus", type=int, default=1)
-    parser.add_argument("--eval_parallel_iterations", type=int, default=10)
-    parser.add_argument("--gpu_mem_frac", type=float, default=0, help="fraction of gpu memory to use")
     parser.add_argument("--dataset", type=str, help="dataset class name")
     parser.add_argument("--dataset_hparams", type=str, help="a string of comma separated list of dataset hyperparameters")
     parser.add_argument("--model", type=str, help="model class name")
     parser.add_argument("--model_hparams", type=str, help="a string of comma separated list of model hyperparameters")
 
-    parser.add_argument("--tasks", type=str, nargs='+', help='tasks to evaluation (e.g. prediction, servo, motion)')
-    parser.add_argument("--eval_substasks", type=str, nargs='+', default=['max', 'min'], help='subtasks to evaluation (e.g. max, avg, min)')
+    parser.add_argument("--batch_size", type=int, default=16, help="number of samples in batch")
+    parser.add_argument("--num_samples", type=int, help="number of samples in total (all of them by default)")
+    parser.add_argument("--num_epochs", type=int, default=1)
+
+    parser.add_argument("--tasks", type=str, nargs='+', help='tasks to evaluate (e.g. prediction, prediction_eval, servo, motion)')
+    parser.add_argument("--eval_substasks", type=str, nargs='+', default=['max', 'min'], help='subtasks to evaluate (e.g. max, avg, min). only applicable to prediction_eval')
     parser.add_argument("--only_metrics", action='store_true')
-    parser.add_argument("--num_stochastic_samples", type=int, default=0)
+    parser.add_argument("--num_stochastic_samples", type=int, default=100)
+
+    parser.add_argument("--gt_inputs_dir", type=str, help="directory containing input ground truth images for ismple dataset")
+    parser.add_argument("--gt_outputs_dir", type=str, help="directory containing output ground truth images for ismple dataset")
+
+    parser.add_argument("--eval_parallel_iterations", type=int, default=10)
+    parser.add_argument("--gpu_mem_frac", type=float, default=0, help="fraction of gpu memory to use")
+    parser.add_argument("--seed", type=int, default=7)
 
     args = parser.parse_args()
-
-    cuda_visible_devices = os.environ['CUDA_VISIBLE_DEVICES']
-    if cuda_visible_devices == '':
-        assert args.num_gpus == 0
-    else:
-        assert len(cuda_visible_devices.split(',')) == args.num_gpus
 
     if args.seed is not None:
         tf.set_random_seed(args.seed)
@@ -331,6 +338,8 @@ def main():
     model_hparams_dict = {}
     if args.checkpoint:
         checkpoint_dir = os.path.normpath(args.checkpoint)
+        if not os.path.exists(checkpoint_dir):
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), checkpoint_dir)
         if not os.path.isdir(args.checkpoint):
             checkpoint_dir, _ = os.path.split(checkpoint_dir)
         with open(os.path.join(checkpoint_dir, "options.json")) as f:
@@ -342,11 +351,11 @@ def main():
             with open(os.path.join(checkpoint_dir, "dataset_hparams.json")) as f:
                 dataset_hparams_dict = json.loads(f.read())
         except FileNotFoundError:
-            print("model_hparams.json was not loaded because it does not exist")
+            print("dataset_hparams.json was not loaded because it does not exist")
         try:
             with open(os.path.join(checkpoint_dir, "model_hparams.json")) as f:
                 model_hparams_dict = json.loads(f.read())
-                model_hparams_dict.pop('num_gpus', None)
+                model_hparams_dict.pop('num_gpus', None)  # backwards-compatibility
         except FileNotFoundError:
             print("model_hparams.json was not loaded because it does not exist")
         args.output_dir = args.output_dir or os.path.join(args.results_dir, os.path.split(checkpoint_dir)[1])
@@ -363,7 +372,8 @@ def main():
     print('------------------------------------- End --------------------------------------')
 
     VideoDataset = datasets.get_dataset_class(args.dataset)
-    dataset = VideoDataset(args.input_dir, mode=args.mode, num_epochs=1, hparams_dict=dataset_hparams_dict, hparams=args.dataset_hparams)
+    dataset = VideoDataset(args.input_dir, mode=args.mode, num_epochs=args.num_epochs, seed=args.seed,
+                           hparams_dict=dataset_hparams_dict, hparams=args.dataset_hparams)
 
     def override_hparams_dict(dataset):
         hparams_dict = dict(model_hparams_dict)
@@ -373,13 +383,14 @@ def main():
         return hparams_dict
 
     VideoPredictionModel = models.get_model_class(args.model)
-    model = VideoPredictionModel(mode='test', num_gpus=args.num_gpus, eval_parallel_iterations=args.eval_parallel_iterations,
-                                 hparams_dict=override_hparams_dict(dataset), hparams=args.model_hparams)
+    model = VideoPredictionModel(mode='test', hparams_dict=override_hparams_dict(dataset), hparams=args.model_hparams,
+                                 eval_num_samples=args.num_stochastic_samples, eval_parallel_iterations=args.eval_parallel_iterations)
     context_frames = model.hparams.context_frames
     sequence_length = model.hparams.sequence_length
 
     inputs, target = dataset.make_batch(args.batch_size)
     if not isinstance(model, models.GroundTruthVideoPredictionModel):
+        # remove ground truth data past context_frames to prevent accidentally using it
         for k, v in inputs.items():
             if k != 'actions':
                 inputs[k] = v[:, :context_frames]
@@ -446,10 +457,47 @@ def main():
         if 'prediction_eval' in tasks:
             feed_dict = {input_ph: input_results[name] for name, input_ph in input_phs.items()}
             feed_dict.update({target_ph: target_result})
-            fetches = {'images': model.inputs['images']}
-            fetches.update(model.eval_outputs.items())
-            fetches.update(model.eval_metrics.items())
-            results = sess.run(fetches, feed_dict=feed_dict)
+            # compute "best" metrics using the computation graph (if available) or explicitly with python logic
+            if model.eval_outputs and model.eval_metrics:
+                fetches = {'images': model.inputs['images']}
+                fetches.update(model.eval_outputs.items())
+                fetches.update(model.eval_metrics.items())
+                results = sess.run(fetches, feed_dict=feed_dict)
+            else:
+                metric_names = ['psnr', 'ssim', 'ssim_scikit', 'ssim_finn', 'vgg_csim']
+                metric_fns = [metrics.peak_signal_to_noise_ratio_np,
+                              metrics.structural_similarity_np,
+                              metrics.structural_similarity_scikit_np,
+                              metrics.structural_similarity_finn_np,
+                              metrics.vgg_cosine_similarity_np]
+
+                all_gen_images = []
+                all_metrics = [np.empty((args.num_stochastic_samples, args.batch_size, sequence_length - context_frames)) for _ in metric_names]
+                for s in range(args.num_stochastic_samples):
+                    gen_images = sess.run(model.outputs['gen_images'], feed_dict=feed_dict)
+                    all_gen_images.append(gen_images)
+                    for metric_name, metric_fn, all_metric in zip(metric_names, metric_fns, all_metrics):
+                        metric = metric_fn(gen_images, target_result, keep_axis=(0, 1))
+                        all_metric[s] = metric
+
+                results = {}
+                for metric_name, all_metric in zip(metric_names, all_metrics):
+                    for subtask in args.eval_substasks:
+                        results['eval_gen_images_%s/%s' % (metric_name, subtask)] = np.empty_like(all_gen_images[0])
+                        results['eval_%s/%s' % (metric_name, subtask)] = np.empty_like(all_metric[0])
+
+                for i in range(args.batch_size):
+                    for metric_name, all_metric in zip(metric_names, all_metrics):
+                        ordered = np.argsort(np.mean(all_metric, axis=-1)[:, i])  # mean over time and sort over samples
+                        for subtask in args.eval_substasks:
+                            if subtask == 'max':
+                                sidx = ordered[-1]
+                            elif subtask == 'min':
+                                sidx = ordered[0]
+                            else:
+                                raise NotImplementedError
+                            results['eval_gen_images_%s/%s' % (metric_name, subtask)][i] = all_gen_images[sidx][i]
+                            results['eval_%s/%s' % (metric_name, subtask)][i] = all_metric[sidx][i]
             save_prediction_eval_results(os.path.join(output_dir, 'prediction_eval'),
                                          results, model.hparams, sample_ind, args.only_metrics, args.eval_substasks)
 

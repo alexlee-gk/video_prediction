@@ -1,5 +1,6 @@
 import functools
 import itertools
+import os
 from collections import OrderedDict
 
 import tensorflow as tf
@@ -18,7 +19,7 @@ from . import vgg_network
 
 class BaseVideoPredictionModel:
     def __init__(self, mode='train', hparams_dict=None, hparams=None,
-                 num_gpus=1, eval_parallel_iterations=1):
+                 num_gpus=None, eval_num_samples=100, eval_parallel_iterations=1):
         """
         Base video prediction model.
 
@@ -33,7 +34,17 @@ class BaseVideoPredictionModel:
                 These values overrides any values in hparams_dict (if any).
         """
         self.mode = mode
+        cuda_visible_devices = os.environ['CUDA_VISIBLE_DEVICES']
+        if cuda_visible_devices == '':
+            max_num_gpus = 0
+        else:
+            max_num_gpus = len(cuda_visible_devices.split(','))
+        if num_gpus is None:
+            num_gpus = max_num_gpus
+        elif num_gpus > max_num_gpus:
+            raise ValueError('num_gpus=%d is greater than the number of visible devices %d' % (num_gpus, max_num_gpus))
         self.num_gpus = num_gpus
+        self.eval_num_samples = eval_num_samples
         self.eval_parallel_iterations = eval_parallel_iterations
         self.hparams = self.parse_hparams(hparams_dict, hparams)
         if not self.hparams.context_frames:
@@ -116,7 +127,9 @@ class BaseVideoPredictionModel:
             metrics[metric_name] = metric_fn(target_images, gen_images)
         return metrics
 
-    def eval_outputs_and_metrics_fn(self, inputs, outputs, targets, num_samples=100, parallel_iterations=1):
+    def eval_outputs_and_metrics_fn(self, inputs, outputs, targets, num_samples=None, parallel_iterations=None):
+        num_samples = num_samples or self.eval_num_samples
+        parallel_iterations = parallel_iterations or self.eval_parallel_iterations
         eval_outputs = OrderedDict()
         eval_metrics = OrderedDict()
         metric_fns = [
@@ -224,7 +237,6 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                  mode='train',
                  hparams_dict=None,
                  hparams=None,
-                 num_gpus=1,
                  **kwargs):
         """
         Trainable video prediction model with CPU and multi-GPU support.
@@ -248,7 +260,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                 where `name` must be defined in `self.get_default_hparams()`.
                 These values overrides any values in hparams_dict (if any).
         """
-        super(VideoPredictionModel, self).__init__(mode, hparams_dict, hparams, num_gpus=num_gpus, **kwargs)
+        super(VideoPredictionModel, self).__init__(mode, hparams_dict, hparams, **kwargs)
 
         self.generator_fn = functools.partial(generator_fn, hparams=self.hparams)
         self.encoder_fn = functools.partial(encoder_fn, hparams=self.hparams) if encoder_fn else None
@@ -344,7 +356,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             vgg_cdist_weight=0.0,
             feature_l2_weight=0.0,
             ae_l2_weight=0.0,
-            state_weight=1e-4,
+            state_weight=0.0,
             tv_weight=0.0,
             gan_weight=0.0,
             vae_gan_weight=0.0,
@@ -485,8 +497,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             with tf.name_scope("metrics"):
                 metrics = self.metrics_fn(inputs, outputs, targets)
             with tf.name_scope("eval_outputs_and_metrics"):
-                eval_outputs, eval_metrics = self.eval_outputs_and_metrics_fn(inputs, outputs, targets,
-                                                                              parallel_iterations=self.eval_parallel_iterations)
+                eval_outputs, eval_metrics = self.eval_outputs_and_metrics_fn(inputs, outputs, targets)
         else:
             d_losses = {}
             g_losses = {}
@@ -509,7 +520,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
 
         global_step = tf.train.get_or_create_global_step()
 
-        if self.num_gpus <= 1:
+        if self.num_gpus <= 1:  # cpu or 1 gpu
             outputs_tuple, losses_tuple, metrics_tuple = self.tower_fn(self.inputs, self.targets)
             self.gen_images, self.gen_images_enc, self.outputs, self.eval_outputs = outputs_tuple
             self.d_losses, self.g_losses, g_losses_post = losses_tuple

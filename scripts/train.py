@@ -35,23 +35,16 @@ def main():
 
     parser.add_argument("--summary_freq", type=int, default=1000, help="save summaries (except for image and eval summaries) every summary_freq steps")
     parser.add_argument("--image_summary_freq", type=int, default=5000, help="save image summaries every image_summary_freq steps")
-    parser.add_argument("--eval_summary_freq", type=int, default=50000, help="save eval summaries every eval_summary_freq steps")
+    parser.add_argument("--eval_summary_freq", type=int, default=0, help="save eval summaries every eval_summary_freq steps")
     parser.add_argument("--progress_freq", type=int, default=100, help="display progress every progress_freq steps")
     parser.add_argument("--metrics_freq", type=int, default=0, help="run and display metrics every metrics_freq step")
     parser.add_argument("--gif_freq", type=int, default=0, help="save gifs of predicted frames every gif_freq steps")
     parser.add_argument("--save_freq", type=int, default=5000, help="save model every save_freq steps, 0 to disable")
 
-    parser.add_argument("--num_gpus", type=int, default=1)
     parser.add_argument("--gpu_mem_frac", type=float, default=0, help="fraction of gpu memory to use")
     parser.add_argument("--seed", type=int)
 
     args = parser.parse_args()
-
-    cuda_visible_devices = os.environ['CUDA_VISIBLE_DEVICES']
-    if cuda_visible_devices == '':
-        assert args.num_gpus == 0
-    else:
-        assert len(cuda_visible_devices.split(',')) == args.num_gpus
 
     if args.seed is not None:
         tf.set_random_seed(args.seed)
@@ -129,8 +122,8 @@ def main():
         return hparams_dict
 
     VideoPredictionModel = models.get_model_class(args.model)
-    train_model = VideoPredictionModel(mode='train', num_gpus=args.num_gpus, hparams_dict=override_hparams_dict(train_dataset), hparams=args.model_hparams)
-    val_models = [VideoPredictionModel(mode='val', num_gpus=args.num_gpus, hparams_dict=override_hparams_dict(val_dataset), hparams=args.model_hparams)
+    train_model = VideoPredictionModel(mode='train', hparams_dict=override_hparams_dict(train_dataset), hparams=args.model_hparams)
+    val_models = [VideoPredictionModel(mode='val', hparams_dict=override_hparams_dict(val_dataset), hparams=args.model_hparams)
                   for val_dataset in val_datasets]
 
     batch_size = train_model.hparams.batch_size
