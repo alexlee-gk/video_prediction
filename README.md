@@ -44,7 +44,7 @@ bash data/download_and_preprocess_dataset.sh bair
 - Train a model (e.g. our SAVP model on the BAIR action-free robot pushing dataset):
 ```bash
 CUDA_VISIBLE_DEVICES=0 python scripts/train.py --input_dir data/bair --dataset bair \
-  --model savp --model_hparams_dict hparams/bair_action_free/ours_savp.json \
+  --model savp --model_hparams_dict hparams/bair_action_free/ours_savp/model_hparams.json \
   --logs_dir logs/bair_action_free
 ```
 - To view training and validation information (e.g. loss plots, GIFs of predictions), run `tensorboard --logdir logs/bair_action_free --port 6006` and open http://localhost:6006.
