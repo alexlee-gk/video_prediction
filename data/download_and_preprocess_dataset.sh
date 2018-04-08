@@ -5,7 +5,7 @@ if [ "$#" -ne 1 ]; then
   exit 1
 fi
 if [ $1 = "bair" ]; then
-  TARGET_DIR=./data/softmotion30_44k
+  TARGET_DIR=./data/bair
   mkdir -p ${TARGET_DIR}
   TAR_FNAME=bair_robot_pushing_dataset_v0.tar
   URL=http://rail.eecs.berkeley.edu/datasets/${TAR_FNAME}

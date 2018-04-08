@@ -30,8 +30,10 @@ def main():
 
     parser.add_argument("--dataset", type=str, help="dataset class name")
     parser.add_argument("--dataset_hparams", type=str, help="a string of comma separated list of dataset hyperparameters")
+    parser.add_argument("--dataset_hparams_dict", type=str, help="a json file of dataset hyperparameters")
     parser.add_argument("--model", type=str, help="model class name")
     parser.add_argument("--model_hparams", type=str, help="a string of comma separated list of model hyperparameters")
+    parser.add_argument("--model_hparams_dict", type=str, help="a json file of model hyperparameters")
 
     parser.add_argument("--summary_freq", type=int, default=1000, help="save summaries (except for image and eval summaries) every summary_freq steps")
     parser.add_argument("--image_summary_freq", type=int, default=5000, help="save image summaries every image_summary_freq steps")
@@ -75,6 +77,12 @@ def main():
 
     dataset_hparams_dict = {}
     model_hparams_dict = {}
+    if args.dataset_hparams_dict:
+        with open(args.dataset_hparams_dict) as f:
+            dataset_hparams_dict.update(json.loads(f.read()))
+    if args.model_hparams_dict:
+        with open(args.model_hparams_dict) as f:
+            model_hparams_dict.update(json.loads(f.read()))
     if args.checkpoint:
         checkpoint_dir = os.path.normpath(args.checkpoint)
         if not os.path.exists(checkpoint_dir):
@@ -88,12 +96,12 @@ def main():
             args.model = args.model or options['model']
         try:
             with open(os.path.join(checkpoint_dir, "dataset_hparams.json")) as f:
-                dataset_hparams_dict = json.loads(f.read())
+                dataset_hparams_dict.update(json.loads(f.read()))
         except FileNotFoundError:
             print("dataset_hparams.json was not loaded because it does not exist")
         try:
             with open(os.path.join(checkpoint_dir, "model_hparams.json")) as f:
-                model_hparams_dict = json.loads(f.read())
+                model_hparams_dict.update(json.loads(f.read()))
                 model_hparams_dict.pop('num_gpus', None)  # backwards-compatibility
         except FileNotFoundError:
             print("model_hparams.json was not loaded because it does not exist")
