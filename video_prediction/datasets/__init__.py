@@ -1,5 +1,5 @@
 from .base_dataset import BaseVideoDataset
-from.base_dataset import VideoDataset, SequenceExampleVideoDataset
+from .base_dataset import VideoDataset, SequenceExampleVideoDataset, VarLenFeatureVideoDataset
 from .google_robot_dataset import GoogleRobotVideoDataset
 from .sv2p_dataset import SV2PVideoDataset
 from .softmotion_dataset import SoftmotionVideoDataset
@@ -12,6 +12,7 @@ def get_dataset_class(dataset):
         'google_robot': 'GoogleRobotVideoDataset',
         'sv2p': 'SV2PVideoDataset',
         'softmotion': 'SoftmotionVideoDataset',
+        'bair': 'SoftmotionVideoDataset',  # alias of softmotion
         'kth': 'KTHVideoDataset',
         'ucf101': 'UCF101VideoDataset'
     }
