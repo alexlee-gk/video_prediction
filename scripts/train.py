@@ -7,7 +7,6 @@ import os
 import random
 import time
 from collections import OrderedDict
-from distutils.util import strtobool
 
 import numpy as np
 import tensorflow as tf
@@ -33,7 +32,6 @@ def main():
     parser.add_argument("--dataset_hparams", type=str, help="a string of comma separated list of dataset hyperparameters")
     parser.add_argument("--model", type=str, help="model class name")
     parser.add_argument("--model_hparams", type=str, help="a string of comma separated list of model hyperparameters")
-    parser.add_argument("--max_steps", type=int, default=300000, help="number of training steps (0 to disable)")
 
     parser.add_argument("--summary_freq", type=int, default=1000, help="save summaries (except for image and eval summaries) every summary_freq steps")
     parser.add_argument("--image_summary_freq", type=int, default=5000, help="save image summaries every image_summary_freq steps")
@@ -103,7 +101,7 @@ def main():
         try:
             with open(os.path.join(checkpoint_dir, "model_hparams.json")) as f:
                 model_hparams_dict = json.loads(f.read())
-                model_hparams_dict.pop('num_gpus', None)
+                model_hparams_dict.pop('num_gpus', None)  # backwards-compatibility
         except FileNotFoundError:
             print("model_hparams.json was not loaded because it does not exist")
 
@@ -187,7 +185,7 @@ def main():
     gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=args.gpu_mem_frac)
     config = tf.ConfigProto(gpu_options=gpu_options, allow_soft_placement=True)
     global_step = tf.train.get_or_create_global_step()
-
+    max_steps = train_model.hparams.max_steps
     with tf.Session(config=config) as sess:
         print("parameter_count =", sess.run(parameter_count))
 
@@ -197,12 +195,12 @@ def main():
         start_step = sess.run(global_step)
         # start at one step earlier to log everything without doing any training
         # step is relative to the start_step
-        for step in range(-1, args.max_steps - start_step):
+        for step in range(-1, max_steps - start_step):
             if step == 0:
                 start = time.time()
 
             def should(freq):
-                return freq and ((step + 1) % freq == 0 or (step + 1) in (0, args.max_steps - start_step))
+                return freq and ((step + 1) % freq == 0 or (step + 1) in (0, max_steps - start_step))
 
             fetches = {"global_step": global_step}
             if step >= 0:
@@ -256,7 +254,7 @@ def main():
                     elapsed_time = time.time() - start
                     average_time = elapsed_time / (step + 1)
                     images_per_sec = batch_size / average_time
-                    remaining_time = (args.max_steps - (start_step + step)) * average_time
+                    remaining_time = (max_steps - (start_step + step)) * average_time
                     print("          image/sec %0.1f  remaining %dm (%0.1fh) (%0.1fd)" %
                           (images_per_sec, remaining_time / 60, remaining_time / 60 / 60, remaining_time / 60 / 60 / 24))
 

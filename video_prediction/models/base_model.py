@@ -145,6 +145,9 @@ class BaseVideoPredictionModel:
             with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
                 _, target_vgg_features = vp.metrics._with_flat_batch(vgg_network.vgg16)(targets)
 
+            def sort_criterion(x):
+                return tf.reduce_mean(x, axis=0)
+
             def accum_gen_images_and_metrics_fn(a, unused):
                 with tf.variable_scope(self.generator_scope, reuse=True):
                     gen_images, _ = self.generator_fn(inputs)
@@ -159,8 +162,8 @@ class BaseVideoPredictionModel:
                         metric /= len(target_vgg_features)
                     else:
                         metric = metric_fn(targets, gen_images, keep_axis=(0, 1))  # time, batch_size
-                    cond_min = tf.less(tf.reduce_mean(metric, axis=0), tf.reduce_mean(a['eval_%s/min' % name], axis=0))
-                    cond_max = tf.greater(tf.reduce_mean(metric, axis=0), tf.reduce_mean(a['eval_%s/max' % name], axis=0))
+                    cond_min = tf.less(sort_criterion(metric), sort_criterion(a['eval_%s/min' % name]))
+                    cond_max = tf.greater(sort_criterion(metric), sort_criterion(a['eval_%s/max' % name]))
                     a['eval_%s/min' % name] = where_axis1(cond_min, metric, a['eval_%s/min' % name])
                     a['eval_%s/sum' % name] = metric + a['eval_%s/sum' % name]
                     a['eval_%s/max' % name] = where_axis1(cond_max, metric, a['eval_%s/max' % name])
@@ -308,23 +311,31 @@ class VideoPredictionModel(BaseVideoPredictionModel):
         Returns:
             A dict with the following hyperparameters.
 
+            batch_size: batch size for training.
+            lr: learning rate. if decay steps is non-zero, this is the
+                learning rate for steps <= decay_step.
+            end_lr: learning rate for steps >= end_decay_step if decay_steps
+                is non-zero, ignored otherwise.
+            decay_steps: (decay_step, end_decay_step) tuple.
+            max_steps: number of training steps.
+            beta1: momentum term of Adam.
+            beta2: momentum term of Adam.
             context_frames: the number of ground-truth frames to pass in at
                 start. Must be specified during instantiation.
             sequence_length: the number of frames in the video sequence,
                 including the context frames, so this model predicts
                 `sequence_length - context_frames` future frames. Must be
                 specified during instantiation.
-            lr: learning rate. if decay steps is non-zero, this is the
-                learning rate for steps <= decay_step.
-            end_lr: learning rate for steps >= end_decay_step if decay_steps
-                is non-zero, ignored otherwise.
-            decay_steps: (decay_step, end_decay_step) tuple.
-            beta1: momentum term of Adam.
-            beta2: momentum term of Adam.
         """
         default_hparams = super(VideoPredictionModel, self).get_default_hparams_dict()
         hparams = dict(
             batch_size=16,
+            lr=0.001,
+            end_lr=0.0,
+            decay_steps=(200000, 300000),
+            max_steps=300000,
+            beta1=0.9,
+            beta2=0.999,
             context_frames=0,
             sequence_length=0,
             clip_length=10,
@@ -357,11 +368,6 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             kl_anneal_k=-1.0,
             kl_anneal_steps=(50000, 100000),
             z_l1_weight=0.0,
-            lr=0.001,
-            end_lr=0.0,
-            decay_steps=(200000, 300000),
-            beta1=0.9,
-            beta2=0.999,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
