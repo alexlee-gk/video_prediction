@@ -29,21 +29,33 @@ pip install -r requirements.txt
 ### Use a Pre-trained Model
 - Download and preprocess a dataset (e.g. `bair`):
 ```bash
-bash ./data/download_and_preprocess_dataset.sh bair
+bash data/download_and_preprocess_dataset.sh bair
 ```
-- Download a pre-trained model (e.g. `savp`) for that dataset:
+- Download a pre-trained model (e.g. `ours_savp`) for that dataset:
 ```bash
-bash ./models/download_model.sh bair savp
+bash models/download_model.sh bair ours_savp
 ```
 
 ### Model Training
-
+- To train a model, download and preprocess a dataset (e.g. `bair`):
+```bash
+bash data/download_and_preprocess_dataset.sh bair
+```
+- Train a model (e.g. our SAVP model on the BAIR action-free robot pushing dataset):
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/train.py --input_dir data/bair --dataset bair \
+  --model savp --model_hparams_dict hparams/bair_action_free/ours_savp.json \
+  --logs_dir logs/bair_action_free
+```
+- To view training and validation information (e.g. loss plots, GIFs of predictions), run `tensorboard --logdir logs/bair_action_free --port 6006` and open http://localhost:6006.
+- For multi-GPU training, set `CUDA_VISIBLE_DEVICES` to a comma-separated list of devices, e.g. `CUDA_VISIBLE_DEVICES=0,1,2,3`. To use the CPU, set `CUDA_VISIBLE_DEVICES=""`.
+- See more training details for other datasets and models in `scripts/train_all.sh`.
 
 ### Datasets
 Download the datasets using the following script. These datasets are collected by other researchers. Please cite their papers if you use the data.
 - Download and preprocess the dataset.
 ```bash
-bash ./data/download_and_preprocess_dataset.sh dataset_name
+bash data/download_and_preprocess_dataset.sh dataset_name
 ```
 - `bair`: [BAIR robot pushing dataset](https://sites.google.com/view/sna-visual-mpc/). [[Citation](data/bibtex/sna.txt)]
 - `kth`: [KTH human actions dataset](http://www.nada.kth.se/cvap/actions/). [[Citation](data/bibtex/kth.txt)]
