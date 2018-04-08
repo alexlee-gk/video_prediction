@@ -1,0 +1,6 @@
+@inproceedings{schuldt2004kth,
+  title={Recognizing human actions: a local {SVM} approach},
+  author={Schuldt, Christian and Laptev, Ivan and Caputo, Barbara},
+  booktitle={International Conference on Pattern Recognition (ICPR)},
+  year={2004},
+}

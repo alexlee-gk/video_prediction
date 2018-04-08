@@ -1,0 +1,6 @@
+@inproceedings{ebert17sna,
+  title={Self-Supervised Visual Planning with Temporal Skip Connections},
+  author={Ebert, Frederik, and Finn, Chelsea and Lee, Alex and Levine, Sergey},
+  booktitle={Conference on Robot Learning (CoRL)},
+  year={2017}
+}
