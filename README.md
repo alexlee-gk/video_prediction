@@ -45,8 +45,8 @@ Download the datasets using the following script. These datasets are collected b
 ```bash
 bash ./data/download_and_preprocess_dataset.sh dataset_name
 ```
-- `bair`: [BAIR robot pushing dataset](https://sites.google.com/view/sna-visual-mpc/). [[Citation](data/bibtex/sna.tex)]
-- `kth`: [KTH human actions dataset](http://www.nada.kth.se/cvap/actions/). [[Citation](data/bibtex/kth.tex)]
+- `bair`: [BAIR robot pushing dataset](https://sites.google.com/view/sna-visual-mpc/). [[Citation](data/bibtex/sna.txt)]
+- `kth`: [KTH human actions dataset](http://www.nada.kth.se/cvap/actions/). [[Citation](data/bibtex/kth.txt)]
 
 ## Models
 
