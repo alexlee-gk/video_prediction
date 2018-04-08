@@ -85,7 +85,7 @@ class BaseVideoDataset:
             frame_skip=0,
             time_shift=1,
             force_time_shift=False,
-            use_state=True,
+            use_state=False,
         )
         return hparams
 
