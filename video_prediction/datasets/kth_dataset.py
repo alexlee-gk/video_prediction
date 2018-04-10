@@ -117,8 +117,7 @@ def main():
     for partition_name, partition_fnames in zip(partition_names, partition_fnames):
         partition_dir = os.path.join(args.output_dir, partition_name)
         if not os.path.exists(partition_dir):
-            os.makedirs(partition_dir, exist_ok=True)
-
+            os.makedirs(partition_dir)
         read_videos_and_save_tf_records(partition_dir, partition_fnames)
 
 
