@@ -138,7 +138,7 @@ def read_videos_and_save_tf_records(output_dir, fnames, start_sequence_iter=None
     print('started process with PID:', os.getpid())
 
     if not os.path.exists(output_dir):
-        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(output_dir)
 
     if start_sequence_iter is None:
         start_sequence_iter = 0
@@ -183,7 +183,7 @@ def main():
     for partition_name, partition_fnames in zip(partition_names, partition_fnames):
         partition_dir = os.path.join(args.output_dir, partition_name)
         if not os.path.exists(partition_dir):
-            os.makedirs(partition_dir, exist_ok=True)
+            os.makedirs(partition_dir)
 
         if args.num_workers > 1:
             num_seqs_per_worker = len(partition_fnames) // args.num_workers

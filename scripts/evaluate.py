@@ -63,7 +63,7 @@ def save_image_sequence(prefix_fname, images, overlaid_images=None, centers=None
     import cv2
     head, tail = os.path.split(prefix_fname)
     if head and not os.path.exists(head):
-        os.makedirs(head, exist_ok=True)
+        os.makedirs(head)
     if images.shape[-1] == 1:
         images = as_heatmap(images)
     if overlaid_images is not None:
@@ -87,7 +87,7 @@ def save_image_sequences(prefix_fname, images, overlaid_images=None, centers=Non
                          radius=5, alpha=0.8, sample_start_ind=0, time_start_ind=0):
     head, tail = os.path.split(prefix_fname)
     if head and not os.path.exists(head):
-        os.makedirs(head, exist_ok=True)
+        os.makedirs(head)
     if overlaid_images is None:
         overlaid_images = [None] * len(images)
     if centers is None:
@@ -101,7 +101,7 @@ def save_image_sequences(prefix_fname, images, overlaid_images=None, centers=Non
 def save_metrics(prefix_fname, metrics, sample_start_ind=0):
     head, tail = os.path.split(prefix_fname)
     if head and not os.path.exists(head):
-        os.makedirs(head, exist_ok=True)
+        os.makedirs(head)
     assert metrics.ndim == 2
     file_mode = 'w' if sample_start_ind == 0 else 'a'
     with open('%s.csv' % prefix_fname, file_mode, newline='') as csvfile:

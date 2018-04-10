@@ -17,7 +17,7 @@ from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_t
 from . import vgg_network
 
 
-class BaseVideoPredictionModel:
+class BaseVideoPredictionModel(object):
     def __init__(self, mode='train', hparams_dict=None, hparams=None,
                  num_gpus=None, eval_num_samples=100, eval_parallel_iterations=1):
         """

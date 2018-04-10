@@ -9,7 +9,7 @@ import tensorflow as tf
 from tensorflow.contrib.training import HParams
 
 
-class BaseVideoDataset:
+class BaseVideoDataset(object):
     def __init__(self, input_dir, mode='train', num_epochs=None, seed=None,
                  hparams_dict=None, hparams=None):
         """

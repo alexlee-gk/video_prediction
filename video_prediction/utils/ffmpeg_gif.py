@@ -19,7 +19,7 @@ def save_gif(gif_fname, images, fps):
     from subprocess import Popen, PIPE
     head, tail = os.path.split(gif_fname)
     if head and not os.path.exists(head):
-        os.makedirs(head, exist_ok=True)
+        os.makedirs(head)
     h, w, c = images[0].shape
     cmd = ['ffmpeg', '-y',
            '-f', 'rawvideo',

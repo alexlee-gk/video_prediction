@@ -32,7 +32,7 @@ def load_images(image_fnames):
 def save_images(image_fnames, images):
     head, tail = os.path.split(image_fnames[0])
     if head and not os.path.exists(head):
-        os.makedirs(head, exist_ok=True)
+        os.makedirs(head)
     for image_fname, image in zip(image_fnames, images):
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         cv2.imwrite(image_fname, image)
@@ -42,7 +42,7 @@ def save_gif(gif_fname, images, fps=4):
     import moviepy.editor as mpy
     head, tail = os.path.split(gif_fname)
     if head and not os.path.exists(head):
-        os.makedirs(head, exist_ok=True)
+        os.makedirs(head)
     clip = mpy.ImageSequenceClip(list(images), fps=fps)
     clip.write_gif(gif_fname)
 
