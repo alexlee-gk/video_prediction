@@ -245,7 +245,7 @@ class VideoDataset(BaseVideoDataset):
                                              list(action_like_names_and_shapes.items())):
             name, shape = name_and_shape
             feature = self._dict_message['features']['feature']
-            names = [name_ for name_ in feature.keys() if re.search(name.replace('%d', '(\d+)'), name_) is not None]
+            names = [name_ for name_ in feature.keys() if re.search(name.replace('%d', '\d+'), name_) is not None]
             if not names:
                 raise ValueError('Could not found any feature with name pattern %s.' % name)
             if example_name in self.state_like_names_and_shapes:
