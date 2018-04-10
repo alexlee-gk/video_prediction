@@ -1,3 +1,5 @@
+*This repo is currently work in progress. Official release is on 04/11.*
+
 # Stochastic Adversarial Video Prediction
 [[Project Page]](https://alexlee-gk.github.io/video_prediction/) [[Paper]](https://arxiv.org/abs/1804.01523)
 
