@@ -3,7 +3,10 @@
 # Stochastic Adversarial Video Prediction
 [[Project Page]](https://alexlee-gk.github.io/video_prediction/) [[Paper]](https://arxiv.org/abs/1804.01523)
 
-TensorFlow implementation for stochastic adversarial video prediction. Given a sequence of initial frames, our model is able to predict future frames of various possible futures.
+TensorFlow implementation for stochastic adversarial video prediction. Given a sequence of initial frames, our model is able to predict future frames of various possible futures. For example, in the next two sequences, we show the ground truth sequence on the left and random predictions of our model on the right. Predicted frames are indicated by the yellow bar at the bottom. For more examples, visit the [project page](https://alexlee-gk.github.io/video_prediction/).
+
+<img src="https://alexlee-gk.github.io/video_prediction/index_files/images/bair_action_free_random_00066_crop.gif" height="96">
+<img src="https://alexlee-gk.github.io/video_prediction/index_files/images/bair_action_free_random_00006_crop.gif" height="96">
 
 **Stochastic Adversarial Video Prediction,**  
 [Alex X. Lee](https://people.eecs.berkeley.edu/~alexlee_gk/), [Richard Zhang](https://richzhang.github.io/), [Frederik Ebert](https://febert.github.io/), [Pieter Abbeel](https://people.eecs.berkeley.edu/~pabbeel/), [Chelsea Finn](https://people.eecs.berkeley.edu/~cbfinn/), [Sergey Levine](https://people.eecs.berkeley.edu/~svlevine/).  
