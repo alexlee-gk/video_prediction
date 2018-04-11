@@ -1,5 +1,3 @@
-*This repo is currently work in progress. Official release is on 04/11.*
-
 # Stochastic Adversarial Video Prediction
 [[Project Page]](https://alexlee-gk.github.io/video_prediction/) [[Paper]](https://arxiv.org/abs/1804.01523)
 
@@ -12,12 +10,12 @@ TensorFlow implementation for stochastic adversarial video prediction. Given a s
 [Alex X. Lee](https://people.eecs.berkeley.edu/~alexlee_gk/), [Richard Zhang](https://richzhang.github.io/), [Frederik Ebert](https://febert.github.io/), [Pieter Abbeel](https://people.eecs.berkeley.edu/~pabbeel/), [Chelsea Finn](https://people.eecs.berkeley.edu/~cbfinn/), [Sergey Levine](https://people.eecs.berkeley.edu/~svlevine/).  
 arXiv preprint arXiv:1804.01523, 2018.
 
-## Prerequisites
+## Getting Started ###
+### Prerequisites
 - Linux or macOS
 - Python 3
 - CPU or NVIDIA GPU + CUDA CuDNN
 
-## Getting Started ###
 ### Installation
 - Clone this repo:
 ```bash
@@ -82,15 +80,31 @@ Download the datasets using the following script. These datasets are collected b
 ```bash
 bash data/download_and_preprocess_dataset.sh dataset_name
 ```
+The `dataset_name` should be one of the following:
 - `bair`: [BAIR robot pushing dataset](https://sites.google.com/view/sna-visual-mpc/). [[Citation](data/bibtex/sna.txt)]
 - `kth`: [KTH human actions dataset](http://www.nada.kth.se/cvap/actions/). [[Citation](data/bibtex/kth.txt)]
 
 To use a different dataset, preprocess it into TFRecords files and define a class for it. See [`kth_dataset.py`](video_prediction/datasets/kth_dataset.py) for an example where the original dataset is given as videos.
 
-## Models
+Note: the `bair` dataset is used for both the action-free and action-conditioned experiments. Set the hyperparameter `use_state=True` to use the action-conditioned version of the dataset.
 
+### Models
+- Download the pre-trained models using the following script.
+```bash
+bash pretrained_models/download_model.sh dataset_name model_name
+```
+The `dataset_name` should be one of the following: `bair_action_free`, `kth`, or `bair`.
+The `model_name` should be one of the available pre-trained models:
+- `ours_savp`: our complete model, trained with variational and adversarial losses. Also referred to as `ours_vae_gan`.
 
-### Citation
+The following are ablations of our model:
+- `ours_gan`: trained with L1 and adversarial loss, with latent variables sampled from the prior at training time.
+- `ours_vae`: trained with L1 and KL loss.
+- `ours_deterministic`: trained with L1 loss, with no stochastic latent variables.
+
+See [`pretrained_models/download_model.sh`](pretrained_models/download_model.sh) for a complete list of available pre-trained models.
+
+## Citation
 
 If you find this useful for your research, please use the following.
 
