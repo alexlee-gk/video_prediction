@@ -36,10 +36,30 @@ pip install -r requirements.txt
 ```bash
 bash data/download_and_preprocess_dataset.sh bair
 ```
-- Download a pre-trained model (e.g. `ours_savp`) for that dataset:
+- Download a pre-trained model (e.g. `ours_savp`) for the action-free version of that dataset (i.e. `bair_action_free`):
 ```bash
-bash models/download_model.sh bair ours_savp
+bash pretrained_models/download_model.sh bair_action_free ours_savp
 ```
+- Sample predictions from the model:
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/generate.py --input_dir data/bair \
+  --dataset_hparams sequence_length=30 \
+  --checkpoint pretrained_models/bair_action_free/ours_savp \
+  --mode test \
+  --results_dir results_test_samples/bair_action_free
+```
+- The predictions are saved as images and GIFs in `results_test_samples/bair_action_free/ours_savp`.
+- Evaluate predictions from the model using full-reference metrics:
+```bash
+CUDA_VISIBLE_DEVICES=0 python scripts/evaluate.py --input_dir data/bair \
+  --dataset_hparams sequence_length=30 \
+  --checkpoint pretrained_models/bair_action_free/ours_savp \
+  --mode test \
+  --results_dir results_test/bair_action_free \
+  --batch_size 8
+```
+- The results are saved in `results_test/bair_action_free/ours_savp`.
+- See evaluation details of our experiments in [`scripts/generate_all.sh`](scripts/generate_all.sh) and [`scripts/evaluate_all.sh`](scripts/evaluate_all.sh).
 
 ### Model Training
 - To train a model, download and preprocess a dataset (e.g. `bair`):
@@ -54,7 +74,7 @@ CUDA_VISIBLE_DEVICES=0 python scripts/train.py --input_dir data/bair --dataset b
 ```
 - To view training and validation information (e.g. loss plots, GIFs of predictions), run `tensorboard --logdir logs/bair_action_free --port 6006` and open http://localhost:6006.
 - For multi-GPU training, set `CUDA_VISIBLE_DEVICES` to a comma-separated list of devices, e.g. `CUDA_VISIBLE_DEVICES=0,1,2,3`. To use the CPU, set `CUDA_VISIBLE_DEVICES=""`.
-- See more training details for other datasets and models in `scripts/train_all.sh`.
+- See more training details for other datasets and models in [`scripts/train_all.sh`](scripts/train_all.sh).
 
 ### Datasets
 Download the datasets using the following script. These datasets are collected by other researchers. Please cite their papers if you use the data.
@@ -64,6 +84,8 @@ bash data/download_and_preprocess_dataset.sh dataset_name
 ```
 - `bair`: [BAIR robot pushing dataset](https://sites.google.com/view/sna-visual-mpc/). [[Citation](data/bibtex/sna.txt)]
 - `kth`: [KTH human actions dataset](http://www.nada.kth.se/cvap/actions/). [[Citation](data/bibtex/kth.txt)]
+
+To use a different dataset, preprocess it into TFRecords files and define a class for it. See [`kth_dataset.py`](video_prediction/datasets/kth_dataset.py) for an example where the original dataset is given as videos.
 
 ## Models
 
