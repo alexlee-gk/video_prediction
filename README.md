@@ -104,6 +104,11 @@ The following are ablations of our model:
 
 See [`pretrained_models/download_model.sh`](pretrained_models/download_model.sh) for a complete list of available pre-trained models.
 
+### Model and Training Hyperparameters
+The implementation is designed such that each video prediction model defines its architecture and training procedure, and include reasonable hyperparameters as defaults.
+Still, a few of the hyperparameters should be overriden for each variant of dataset and model.
+The hyperparameters used in our experiments are provided in [`hparams`](hparams) as JSON files, and they can be passed onto the training script with the `--model_hparams_dict` flag.
+
 ## Citation
 
 If you find this useful for your research, please use the following.
