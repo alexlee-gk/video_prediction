@@ -28,6 +28,7 @@ cd video_prediction
 ```bash
 pip install -r requirements.txt
 ```
+Note: in macOS, make sure that bash >= 4.0 is used (needed for associative arrays in `download_model.sh` script).
 
 ### Use a Pre-trained Model
 - Download and preprocess a dataset (e.g. `bair`):
