@@ -34,7 +34,7 @@ class BaseVideoPredictionModel(object):
                 These values overrides any values in hparams_dict (if any).
         """
         self.mode = mode
-        cuda_visible_devices = os.environ['CUDA_VISIBLE_DEVICES']
+        cuda_visible_devices = os.environ.get('CUDA_VISIBLE_DEVICES', '0')
         if cuda_visible_devices == '':
             max_num_gpus = 0
         else:

@@ -311,7 +311,7 @@ def main():
     parser.add_argument("--model", type=str, help="model class name")
     parser.add_argument("--model_hparams", type=str, help="a string of comma separated list of model hyperparameters")
 
-    parser.add_argument("--batch_size", type=int, default=16, help="number of samples in batch")
+    parser.add_argument("--batch_size", type=int, default=8, help="number of samples in batch")
     parser.add_argument("--num_samples", type=int, help="number of samples in total (all of them by default)")
     parser.add_argument("--num_epochs", type=int, default=1)
 
@@ -387,6 +387,15 @@ def main():
                                  eval_num_samples=args.num_stochastic_samples, eval_parallel_iterations=args.eval_parallel_iterations)
     context_frames = model.hparams.context_frames
     sequence_length = model.hparams.sequence_length
+
+    if args.num_samples:
+        if args.num_samples > dataset.num_examples_per_epoch():
+            raise ValueError('num_samples cannot be larger than the dataset')
+        num_examples_per_epoch = args.num_samples
+    else:
+        num_examples_per_epoch = dataset.num_examples_per_epoch()
+    if num_examples_per_epoch % args.batch_size != 0:
+        raise ValueError('batch_size should evenly divide the dataset')
 
     inputs, target = dataset.make_batch(args.batch_size)
     if not isinstance(model, models.GroundTruthVideoPredictionModel):
