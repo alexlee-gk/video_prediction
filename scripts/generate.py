@@ -1,3 +1,7 @@
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import argparse
 import errno
 import json
@@ -10,7 +14,6 @@ import tensorflow as tf
 
 from video_prediction import datasets, models
 from video_prediction.utils.ffmpeg_gif import save_gif
-from tensorflow.python.util import nest
 
 
 def main():
