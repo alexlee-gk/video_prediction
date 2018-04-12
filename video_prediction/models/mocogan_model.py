@@ -10,39 +10,53 @@ from video_prediction.ops import lrelu, conv2d, flatten, tile_concat, pool2d, de
 from video_prediction.utils import tf_utils
 
 
+def noise(x, use_noise, sigma=0.2):
+    if use_noise:
+        return x + sigma * tf.random_normal(x.shape, 0, 1)
+    return x
+
+
 def create_image_discriminator(images,
                                ndf=64,
-                               norm_layer='instance'):
+                               norm_layer='instance',
+                               use_noise=False,
+                               noise_sigma=None):
     norm_layer = ops.get_norm_layer(norm_layer)
     layers = []
     paddings = [[0, 0], [1, 1], [1, 1], [0, 0]]
 
     with tf.variable_scope("image_layer_1"):
-        h1 = conv2d(tf.pad(images, paddings), ndf, kernel_size=4, strides=2, padding='VALID')
+        h1 = noise(images, use_noise, noise_sigma)
+        h1 = conv2d(tf.pad(h1, paddings), ndf, kernel_size=4, strides=2, padding='VALID', use_bias=False)
         h1 = lrelu(h1, 0.2)
         layers.append(h1)
 
     with tf.variable_scope("image_layer_2"):
-        h2 = conv2d(tf.pad(h1, paddings), ndf * 2, kernel_size=4, strides=2, padding='VALID')
+        h2 = noise(h1, use_noise, noise_sigma)
+        h2 = conv2d(tf.pad(h2, paddings), ndf * 2, kernel_size=4, strides=2, padding='VALID', use_bias=False)
         h2 = norm_layer(h2)
         h2 = lrelu(h2, 0.2)
         layers.append(h2)
 
     with tf.variable_scope("image_layer_3"):
-        h3 = conv2d(tf.pad(h2, paddings), ndf * 4, kernel_size=4, strides=2, padding='VALID')
+        h3 = noise(h2, use_noise, noise_sigma)
+        h3 = conv2d(tf.pad(h3, paddings), ndf * 4, kernel_size=4, strides=2, padding='VALID', use_bias=False)
         h3 = norm_layer(h3)
         h3 = lrelu(h3, 0.2)
         layers.append(h3)
 
     with tf.variable_scope("image_layer_4"):
-        logits = conv2d(h3, 1, kernel_size=4, strides=1, padding='VALID')
+        h4 = noise(h3, use_noise, noise_sigma)
+        logits = conv2d(tf.pad(h4, paddings), 1, kernel_size=4, strides=2, padding='VALID', use_bias=False)
         layers.append(logits)
     return layers
 
 
 def create_video_discriminator(clips,
                                ndf=64,
-                               norm_layer='instance'):
+                               norm_layer='instance',
+                               use_noise=False,
+                               noise_sigma=None):
     norm_layer = ops.get_norm_layer(norm_layer)
     layers = []
     paddings = [[0, 0], [0, 0], [1, 1], [1, 1], [0, 0]]
@@ -50,28 +64,27 @@ def create_video_discriminator(clips,
     clips = tf_utils.transpose_batch_time(clips)
 
     with tf.variable_scope("video_layer_1"):
-        h1 = conv3d(tf.pad(clips, paddings), ndf, kernel_size=4, strides=(1, 2, 2), padding='VALID')
+        h1 = noise(clips, use_noise, noise_sigma)
+        h1 = conv3d(tf.pad(h1, paddings), ndf, kernel_size=4, strides=(1, 2, 2), padding='VALID', use_bias=False)
         h1 = lrelu(h1, 0.2)
         layers.append(h1)
 
     with tf.variable_scope("video_layer_2"):
-        h2 = conv3d(tf.pad(h1, paddings), ndf * 2, kernel_size=4, strides=(1, 2, 2), padding='VALID')
+        h2 = noise(h1, use_noise, noise_sigma)
+        h2 = conv3d(tf.pad(h2, paddings), ndf * 2, kernel_size=4, strides=(1, 2, 2), padding='VALID', use_bias=False)
         h2 = norm_layer(h2)
         h2 = lrelu(h2, 0.2)
         layers.append(h2)
 
     with tf.variable_scope("video_layer_3"):
-        h3 = conv3d(tf.pad(h2, paddings), ndf * 4, kernel_size=4, strides=(1, 2, 2), padding='VALID')
+        h3 = noise(h2, use_noise, noise_sigma)
+        h3 = conv3d(tf.pad(h3, paddings), ndf * 4, kernel_size=4, strides=(1, 2, 2), padding='VALID', use_bias=False)
         h3 = norm_layer(h3)
         h3 = lrelu(h3, 0.2)
         layers.append(h3)
 
     with tf.variable_scope("video_layer_4"):
-        if h3.shape[1].value < 4:
-            kernel_size = (h3.shape[1].value, 4, 4)
-        else:
-            kernel_size = 4
-        logits = conv3d(h3, 1, kernel_size=kernel_size, strides=1, padding='VALID')
+        logits = conv3d(tf.pad(h3, paddings), 1, kernel_size=4, strides=(1, 2, 2), padding='VALID', use_bias=False)
         layers.append(logits)
     return nest.map_structure(tf_utils.transpose_batch_time, layers)
 
@@ -79,7 +92,9 @@ def create_video_discriminator(clips,
 def create_acvideo_discriminator(clips,
                                  actions,
                                  ndf=64,
-                                 norm_layer='instance'):
+                                 norm_layer='instance',
+                                 use_noise=False,
+                                 noise_sigma=None):
     norm_layer = ops.get_norm_layer(norm_layer)
     layers = []
     paddings = [[0, 0], [0, 0], [1, 1], [1, 1], [0, 0]]
@@ -89,28 +104,27 @@ def create_acvideo_discriminator(clips,
     clip_pairs = tf_utils.transpose_batch_time(clip_pairs)
 
     with tf.variable_scope("acvideo_layer_1"):
-        h1 = conv3d(tf.pad(clip_pairs, paddings), ndf, kernel_size=(3, 4, 4), strides=(1, 2, 2), padding='VALID')
+        h1 = noise(clip_pairs, use_noise, noise_sigma)
+        h1 = conv3d(tf.pad(h1, paddings), ndf, kernel_size=(3, 4, 4), strides=(1, 2, 2), padding='VALID', use_bias=False)
         h1 = lrelu(h1, 0.2)
         layers.append(h1)
 
     with tf.variable_scope("acvideo_layer_2"):
-        h2 = conv3d(tf.pad(h1, paddings), ndf * 2, kernel_size=(3, 4, 4), strides=(1, 2, 2), padding='VALID')
+        h2 = noise(h1, use_noise, noise_sigma)
+        h2 = conv3d(tf.pad(h2, paddings), ndf * 2, kernel_size=(3, 4, 4), strides=(1, 2, 2), padding='VALID', use_bias=False)
         h2 = norm_layer(h2)
         h2 = lrelu(h2, 0.2)
         layers.append(h2)
 
     with tf.variable_scope("acvideo_layer_3"):
-        h3 = conv3d(tf.pad(h2, paddings), ndf * 4, kernel_size=(3, 4, 4), strides=(1, 2, 2), padding='VALID')
+        h3 = noise(h2, use_noise, noise_sigma)
+        h3 = conv3d(tf.pad(h3, paddings), ndf * 4, kernel_size=(3, 4, 4), strides=(1, 2, 2), padding='VALID', use_bias=False)
         h3 = norm_layer(h3)
         h3 = lrelu(h3, 0.2)
         layers.append(h3)
 
     with tf.variable_scope("acvideo_layer_4"):
-        if h3.shape[1].value < 4:
-            kernel_size = (h3.shape[1].value, 4, 4)
-        else:
-            kernel_size = 4
-        logits = conv3d(h3, 1, kernel_size=kernel_size, strides=1, padding='VALID')
+        logits = conv3d(tf.pad(h3, paddings), 1, kernel_size=(3, 4, 4), strides=(1, 2, 2), padding='VALID', use_bias=False)
         layers.append(logits)
     return nest.map_structure(tf_utils.transpose_batch_time, layers)
 
@@ -138,17 +152,20 @@ def discriminator_fn(targets, inputs=None, hparams=None):
 
     outputs = {}
     if hparams.image_gan_weight or hparams.image_vae_gan_weight:
-        image_features = create_image_discriminator(image_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer)
+        image_features = create_image_discriminator(image_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer,
+                                                    use_noise=hparams.use_noise, noise_sigma=hparams.noise_sigma)
         image_features, image_logits = image_features[:-1], image_features[-1]
         outputs['discrim_image_logits'] = tf.expand_dims(image_logits, axis=0)  # expand dims for the time dimension
         with tf.variable_scope(tf.get_variable_scope(), reuse=True):
-            images_features = create_image_discriminator(flatten(targets, 0, 1), ndf=hparams.ndf, norm_layer=hparams.norm_layer)
+            images_features = create_image_discriminator(flatten(targets, 0, 1), ndf=hparams.ndf, norm_layer=hparams.norm_layer,
+                                                         use_noise=hparams.use_noise, noise_sigma=hparams.noise_sigma)
         images_features = images_features[:-1]
         for i, images_feature in enumerate(images_features):
             images_feature = tf.reshape(images_feature, targets.shape[:2].as_list() + images_feature.shape[1:].as_list())
             outputs['discrim_image_feature%d' % i] = images_feature
     if hparams.video_gan_weight or hparams.video_vae_gan_weight:
-        video_features = create_video_discriminator(clip_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer)
+        video_features = create_video_discriminator(clip_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer,
+                                                    use_noise=hparams.use_noise, noise_sigma=hparams.noise_sigma)
         video_features, video_logits = video_features[:-1], video_features[-1]
         outputs['discrim_video_logits'] = video_logits
         for i, video_feature in enumerate(video_features):
@@ -158,7 +175,8 @@ def discriminator_fn(targets, inputs=None, hparams=None):
         indices = tf.expand_dims(t_start_indices, axis=0) + tf.expand_dims(t_offset_indices, axis=1)
         actions = inputs['actions'][hparams.context_frames:]
         actions_sample = tf.reshape(tf.gather_nd(actions, flatten(indices, 0, 1)), [hparams.clip_length - 1] + actions.shape.as_list()[1:])
-        acvideo_features = create_acvideo_discriminator(clip_sample, actions_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer)
+        acvideo_features = create_acvideo_discriminator(clip_sample, actions_sample, ndf=hparams.ndf, norm_layer=hparams.norm_layer,
+                                                        use_noise=hparams.use_noise, noise_sigma=hparams.noise_sigma)
         acvideo_features, acvideo_logits = acvideo_features[:-1], acvideo_features[-1]
         outputs['discrim_acvideo_logits'] = acvideo_logits
         for i, acvideo_feature in enumerate(acvideo_features):
@@ -215,31 +233,31 @@ def create_generator(z,
     layers = []
 
     with tf.variable_scope("layer_1"):
-        h0 = deconv2d(z, ngf * 8, kernel_size=4, strides=1, padding='VALID')
+        h0 = deconv2d(z, ngf * 8, kernel_size=4, strides=1, padding='VALID', use_bias=False)
         h0 = norm_layer(h0)
         h0 = tf.nn.relu(h0)
         layers.append(h0)
 
     with tf.variable_scope("layer_2"):
-        h1 = deconv2d(h0, ngf * 4, kernel_size=4, strides=2)
+        h1 = deconv2d(h0, ngf * 4, kernel_size=4, strides=2, use_bias=False)
         h1 = norm_layer(h1)
         h1 = tf.nn.relu(h1)
         layers.append(h1)
 
     with tf.variable_scope("layer_3"):
-        h2 = deconv2d(h1, ngf * 2, kernel_size=4, strides=2)
+        h2 = deconv2d(h1, ngf * 2, kernel_size=4, strides=2, use_bias=False)
         h2 = norm_layer(h2)
         h2 = tf.nn.relu(h2)
         layers.append(h2)
 
     with tf.variable_scope("layer_4"):
-        h3 = deconv2d(h2, ngf, kernel_size=4, strides=2)
+        h3 = deconv2d(h2, ngf, kernel_size=4, strides=2, use_bias=False)
         h3 = norm_layer(h3)
         h3 = tf.nn.relu(h3)
         layers.append(h3)
 
     with tf.variable_scope("layer_5"):
-        h4 = deconv2d(h3, n_channels, kernel_size=4, strides=2)
+        h4 = deconv2d(h3, n_channels, kernel_size=4, strides=2, use_bias=False)
         h4 = tf.nn.tanh(h4)
         layers.append(h4)
     return h4
@@ -302,6 +320,8 @@ class MoCoGANVideoPredictionModel(VideoPredictionModel):
             dim_z_content=50,
             dim_z_motion=10,
             norm_layer='batch',
+            use_noise=False,
+            noise_sigma=0.0,
             clip_length=10,
             lr=0.0002,
             beta1=0.5,

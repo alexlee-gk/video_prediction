@@ -759,19 +759,20 @@ def upsample_conv2d_v2(inputs, filters, kernel_size, strides=(1, 1), padding='SA
     return outputs
 
 
-def conv3d(inputs, filters, kernel_size, strides=(1, 1), padding='SAME', use_spectral_norm=False):
+def conv3d(inputs, filters, kernel_size, strides=(1, 1), padding='SAME', use_bias=True, use_spectral_norm=False):
+    kernel_size = list(kernel_size) if isinstance(kernel_size, (tuple, list)) else [kernel_size] * 3
+    strides = list(strides) if isinstance(strides, (tuple, list)) else [strides] * 3
+    input_shape = inputs.get_shape().as_list()
+    kernel_shape = list(kernel_size) + [input_shape[-1], filters]
     with tf.variable_scope('conv3d'):
-        kernel_size = list(kernel_size) if isinstance(kernel_size, (tuple, list)) else [kernel_size] * 3
-        strides = list(strides) if isinstance(strides, (tuple, list)) else [strides] * 3
-        input_shape = inputs.get_shape().as_list()
-        kernel_shape = list(kernel_size) + [input_shape[-1], filters]
         kernel = tf.get_variable('kernel', kernel_shape, dtype=tf.float32, initializer=tf.truncated_normal_initializer(stddev=0.02))
         if use_spectral_norm:
             kernel = spectral_normed_weight(kernel)
-        outputs = tf.nn.conv3d(inputs, kernel, [1] + strides + [1], padding=padding)
+    outputs = tf.nn.conv3d(inputs, kernel, [1] + strides + [1], padding=padding)
+    if use_bias:
         bias = tf.get_variable('bias', [filters], dtype=tf.float32, initializer=tf.zeros_initializer())
         outputs = tf.nn.bias_add(outputs, bias)
-        return outputs
+    return outputs
 
 
 def pool2d(inputs, pool_size, strides=(1, 1), padding='SAME', pool_mode='avg'):
