@@ -187,7 +187,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         batch_size = inputs['images'].shape[1].value
         image_shape = inputs['images'].shape.as_list()[2:]
         height, width, _ = image_shape
-        scale_size = min(height, width)
+        scale_size = max(height, width)
         if scale_size == 256:
             self.encoder_layer_specs = [
                 (self.hparams.ngf, False),
