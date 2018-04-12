@@ -291,6 +291,7 @@ class MoCoGANVideoPredictionModel(VideoPredictionModel):
     def get_default_hparams_dict(self):
         default_hparams = super(MoCoGANVideoPredictionModel, self).get_default_hparams_dict()
         hparams = dict(
+            batch_size=32,
             l1_weight=10.0,
             l2_weight=0.0,
             image_gan_weight=1.0,

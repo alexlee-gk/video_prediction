@@ -47,10 +47,10 @@ class BaseVideoPredictionModel(object):
         self.eval_num_samples = eval_num_samples
         self.eval_parallel_iterations = eval_parallel_iterations
         self.hparams = self.parse_hparams(hparams_dict, hparams)
-        if not self.hparams.context_frames:
+        if self.hparams.context_frames == -1:
             raise ValueError('Invalid context_frames %r. It might have to be '
                              'specified.' % self.hparams.context_frames)
-        if not self.hparams.sequence_length:
+        if self.hparams.sequence_length == -1:
             raise ValueError('Invalid sequence_length %r. It might have to be '
                              'specified.' % self.hparams.sequence_length)
 
@@ -84,8 +84,8 @@ class BaseVideoPredictionModel(object):
             repeat: the number of repeat actions (if applicable).
         """
         hparams = dict(
-            context_frames=0,
-            sequence_length=0,
+            context_frames=-1,
+            sequence_length=-1,
             repeat=1,
         )
         return hparams
@@ -348,8 +348,8 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             max_steps=300000,
             beta1=0.9,
             beta2=0.999,
-            context_frames=0,
-            sequence_length=0,
+            context_frames=-1,
+            sequence_length=-1,
             clip_length=10,
             l1_weight=0.0,
             l2_weight=1.0,
