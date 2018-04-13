@@ -25,6 +25,8 @@ def create_image_discriminator(images,
     layers = []
     paddings = [[0, 0], [1, 1], [1, 1], [0, 0]]
 
+    images = images * 2 - 1
+
     with tf.variable_scope("image_layer_1"):
         h1 = noise(images, use_noise, noise_sigma)
         h1 = conv2d(tf.pad(h1, paddings), ndf, kernel_size=4, strides=2, padding='VALID', use_bias=False)
@@ -61,6 +63,7 @@ def create_video_discriminator(clips,
     layers = []
     paddings = [[0, 0], [0, 0], [1, 1], [1, 1], [0, 0]]
 
+    clips = clips * 2 - 1
     clips = tf_utils.transpose_batch_time(clips)
 
     with tf.variable_scope("video_layer_1"):
@@ -99,6 +102,7 @@ def create_acvideo_discriminator(clips,
     layers = []
     paddings = [[0, 0], [0, 0], [1, 1], [1, 1], [0, 0]]
 
+    clips = clips * 2 - 1
     clip_pairs = tf.concat([clips[:-1], clips[1:]], axis=-1)
     clip_pairs = tile_concat([clip_pairs, actions[..., None, None, :]], axis=-1)
     clip_pairs = tf_utils.transpose_batch_time(clip_pairs)
@@ -192,6 +196,8 @@ def create_encoder(image,
     layers = []
     paddings = [[0, 0], [1, 1], [1, 1], [0, 0]]
 
+    image = image * 2 - 1
+
     with tf.variable_scope("layer_1"):
         h0 = conv2d(tf.pad(image, paddings), nef, kernel_size=4, strides=2, padding='VALID')
         h0 = norm_layer(h0)
@@ -259,6 +265,7 @@ def create_generator(z,
     with tf.variable_scope("layer_5"):
         h4 = deconv2d(h3, n_channels, kernel_size=4, strides=2, use_bias=False)
         h4 = tf.nn.tanh(h4)
+        h4 = (h4 + 1) / 2.0
         layers.append(h4)
     return h4
 
