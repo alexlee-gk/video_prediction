@@ -99,3 +99,10 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+# tensorflow model files:
+model-*
+events.out*
+
+.idea/
+

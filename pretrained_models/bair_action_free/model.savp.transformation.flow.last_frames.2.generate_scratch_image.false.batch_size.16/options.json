@@ -1,0 +1,23 @@
+{
+    "checkpoint": null,
+    "dataset": "cartgripper",
+    "dataset_hparams": null,
+    "dataset_hparams_dict": null,
+    "eval_summary_freq": 0,
+    "gif_freq": 0,
+    "gpu_mem_frac": 0,
+    "image_summary_freq": 5000,
+    "input_dir": "data/cartgripper_updown_sact",
+    "logs_dir": "logs/cartgripper/vae",
+    "metrics_freq": 0,
+    "model": "savp",
+    "model_hparams": "transformation=flow,last_frames=2,generate_scratch_image=false,batch_size=16",
+    "model_hparams_dict": "hparams/bair/ours_vae_l1/model_hparams.json",
+    "output_dir": "logs/cartgripper/vae/model.savp.transformation.flow.last_frames.2.generate_scratch_image.false.batch_size.16",
+    "progress_freq": 100,
+    "resume": false,
+    "save_freq": 5000,
+    "seed": null,
+    "summary_freq": 1000,
+    "val_input_dirs": null
+}
