@@ -570,6 +570,24 @@ def pixel_distribution(pos, height, width):
     return tf.add_n([wa * Ia, wb * Ib, wc * Ic, wd * Id])
 
 
+def flow_to_rgb(flows):
+    """The last axis should have dimension 2, for x and y values."""
+
+    def cartesian_to_polar(x, y):
+        magnitude = tf.sqrt(tf.square(x) + tf.square(y))
+        angle = tf.atan2(y, x)
+        return magnitude, angle
+
+    mag, ang = cartesian_to_polar(*tf.unstack(flows, axis=-1))
+    ang_normalized = (ang + np.pi) / (2 * np.pi)
+    mag_min = tf.reduce_min(mag)
+    mag_max = tf.reduce_max(mag)
+    mag_normalized = (mag - mag_min) / (mag_max - mag_min)
+    hsv = tf.stack([ang_normalized, tf.ones_like(ang), mag_normalized], axis=-1)
+    rgb = tf.image.hsv_to_rgb(hsv)
+    return rgb
+
+
 class PersistentOpEvaluator(object):
     """Evaluate a fixed TensorFlow graph repeatedly, safely, efficiently.
     Extend this class to create a particular kind of op evaluator, like an
