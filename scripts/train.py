@@ -228,9 +228,42 @@ def main():
             if run_elapsed_time > 1.5:
                 print('session.run took %0.1fs' % run_elapsed_time)
 
+            if should(args.progress_freq) or should(args.summary_freq):
+                if step >= 0:
+                    elapsed_time = time.time() - start
+                    average_time = elapsed_time / (step + 1)
+                    images_per_sec = batch_size / average_time
+                    remaining_time = (max_steps - (start_step + step)) * average_time
+
+            if should(args.progress_freq):
+                # global_step will have the correct step count if we resume from a checkpoint
+                steps_per_epoch = math.ceil(train_dataset.num_examples_per_epoch() / batch_size)
+                train_epoch = math.ceil(results["global_step"] / steps_per_epoch)
+                train_step = (results["global_step"] - 1) % steps_per_epoch + 1
+                print("progress  global step %d  epoch %d  step %d" % (results["global_step"], train_epoch, train_step))
+                if step >= 0:
+                    print("          image/sec %0.1f  remaining %dm (%0.1fh) (%0.1fd)" %
+                          (images_per_sec, remaining_time / 60, remaining_time / 60 / 60, remaining_time / 60 / 60 / 24))
+
+                for name, loss in itertools.chain(results['d_losses'].items(), results['g_losses'].items()):
+                    print(name, loss)
+                if isinstance(train_model.learning_rate, tf.Tensor):
+                    print("learning_rate", results["learning_rate"])
+            if should(args.metrics_freq):
+                for name, metric in results['metrics']:
+                    print(name, metric)
+
             if should(args.summary_freq):
                 print("recording summary")
                 summary_writer.add_summary(results["summary"], results["global_step"])
+                if step >= 0:
+                    try:
+                        from tensorboard.summary import scalar_pb
+                        for name, scalar in zip(['images_per_sec', 'remaining_hours'],
+                                                [images_per_sec, remaining_time / 60 / 60]):
+                            summary_writer.add_summary(scalar_pb(name, scalar), results["global_step"])
+                    except ImportError:
+                        pass
                 print("done")
             if should(args.image_summary_freq):
                 print("recording image summary")
@@ -245,27 +278,6 @@ def main():
                 print("done")
             if should(args.summary_freq) or should(args.image_summary_freq) or should(args.eval_summary_freq):
                 summary_writer.flush()
-            if should(args.progress_freq):
-                # global_step will have the correct step count if we resume from a checkpoint
-                steps_per_epoch = math.ceil(train_dataset.num_examples_per_epoch() / batch_size)
-                train_epoch = math.ceil(results["global_step"] / steps_per_epoch)
-                train_step = (results["global_step"] - 1) % steps_per_epoch + 1
-                print("progress  global step %d  epoch %d  step %d" % (results["global_step"], train_epoch, train_step))
-                if step >= 0:
-                    elapsed_time = time.time() - start
-                    average_time = elapsed_time / (step + 1)
-                    images_per_sec = batch_size / average_time
-                    remaining_time = (max_steps - (start_step + step)) * average_time
-                    print("          image/sec %0.1f  remaining %dm (%0.1fh) (%0.1fd)" %
-                          (images_per_sec, remaining_time / 60, remaining_time / 60 / 60, remaining_time / 60 / 60 / 24))
-
-                for name, loss in itertools.chain(results['d_losses'].items(), results['g_losses'].items()):
-                    print(name, loss)
-                if isinstance(train_model.learning_rate, tf.Tensor):
-                    print("learning_rate", results["learning_rate"])
-            if should(args.metrics_freq):
-                for name, metric in results['metrics']:
-                    print(name, metric)
 
             if should(args.save_freq):
                 print("saving model to", args.output_dir)
