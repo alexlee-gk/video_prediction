@@ -249,6 +249,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             output_size['gen_states'] = inputs['states'].shape[2:]
         if self.hparams.transformation == 'flow':
             output_size['gen_flows'] = tf.TensorShape([height, width, 2, self.hparams.last_frames * self.hparams.num_transformed_images])
+            output_size['gen_flows_rgb'] = tf.TensorShape([height, width, 3, self.hparams.last_frames * self.hparams.num_transformed_images])
         self._output_size = output_size
 
         # state_size
@@ -597,6 +598,10 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             outputs['gen_states'] = gen_state
         if self.hparams.transformation == 'flow':
             outputs['gen_flows'] = flows
+            flows_transposed = tf.transpose(flows, [0, 1, 2, 4, 3])
+            flows_rgb_transposed = tf_utils.flow_to_rgb(flows_transposed)
+            flows_rgb = tf.transpose(flows_rgb_transposed, [0, 1, 2, 4, 3])
+            outputs['gen_flows_rgb'] = flows_rgb
 
         new_states = {'time': time + 1,
                       'gen_image': gen_image,
