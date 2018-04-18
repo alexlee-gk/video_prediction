@@ -8,8 +8,9 @@ from tensorflow.contrib.training import HParams
 from tensorflow.python.util import nest
 
 import video_prediction as vp
+import video_prediction.utils.tf_utils
 from video_prediction.functional_ops import foldl
-from video_prediction.ops import flatten
+from video_prediction.ops import pool2d
 from video_prediction.utils import tf_utils
 from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
     replace_read_ops, print_loss_info, transpose_batch_time, add_tensor_summaries, add_scalar_summaries, \
@@ -156,7 +157,7 @@ class BaseVideoPredictionModel(object):
                 return transpose_batch_time(tf.where(cond, transpose_batch_time(x), transpose_batch_time(y)))
 
             with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
-                _, target_vgg_features = vp.metrics._with_flat_batch(vgg_network.vgg16)(targets)
+                _, target_vgg_features = video_prediction.utils.tf_utils.with_flat_batch(vgg_network.vgg16)(targets)
 
             def sort_criterion(x):
                 return tf.reduce_mean(x, axis=0)
@@ -165,7 +166,7 @@ class BaseVideoPredictionModel(object):
                 with tf.variable_scope(self.generator_scope, reuse=True):
                     gen_images, _ = self.generator_fn(inputs)
                 with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
-                    _, gen_vgg_features = vp.metrics._with_flat_batch(vgg_network.vgg16)(gen_images)
+                    _, gen_vgg_features = video_prediction.utils.tf_utils.with_flat_batch(vgg_network.vgg16)(gen_images)
                 for name, metric_fn in metric_fns:
                     if name in ('vgg_csim', 'vgg_cdist'):
                         metric_fn = {'vgg_csim': vp.metrics.cosine_similarity, 'vgg_cdist': vp.metrics.cosine_distance}[name]
@@ -353,6 +354,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             clip_length=10,
             l1_weight=0.0,
             l2_weight=1.0,
+            num_scales=1,
             vgg_cdist_weight=0.0,
             feature_l2_weight=0.0,
             ae_l2_weight=0.0,
@@ -659,6 +661,17 @@ class VideoPredictionModel(BaseVideoPredictionModel):
         if hparams.l2_weight:
             gen_l2_loss = vp.losses.l2_loss(gen_images, target_images)
             gen_losses["gen_l2_loss"] = (gen_l2_loss, hparams.l2_weight)
+        if (hparams.l1_weight or hparams.l2_weight) and hparams.num_scales > 1:
+            for i in range(1, hparams.num_scales):
+                scale_factor = 2 ** i
+                gen_images_scale = tf_utils.with_flat_batch(pool2d)(gen_images, scale_factor, scale_factor, pool_mode='avg')
+                target_images_scale = tf_utils.with_flat_batch(pool2d)(target_images, scale_factor, scale_factor, pool_mode='avg')
+                if hparams.l1_weight:
+                    gen_l1_scale_loss = vp.losses.l1_loss(gen_images_scale, target_images_scale)
+                    gen_losses["gen_l1_scale%d_loss" % i] = (gen_l1_scale_loss, hparams.l1_weight)
+                if hparams.l2_weight:
+                    gen_l2_scale_loss = vp.losses.l2_loss(gen_images_scale, target_images_scale)
+                    gen_losses["gen_l2_scale%d_loss" % i] = (gen_l2_scale_loss, hparams.l2_weight)
         if hparams.vgg_cdist_weight:
             gen_vgg_cdist_loss = vp.metrics.vgg_cosine_distance(gen_images, target_images)
             gen_losses['gen_vgg_cdist_loss'] = (gen_vgg_cdist_loss, hparams.vgg_cdist_weight)
@@ -679,8 +692,11 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             gen_losses["gen_state_loss"] = (gen_state_loss, hparams.state_weight)
         if hparams.tv_weight:
             gen_flows = outputs.get('gen_flows_enc', outputs['gen_flows'])
-            gen_flows_reshaped = flatten(flatten(gen_flows, 0, 1), -2)
-            gen_tv_loss = tf.reduce_mean(tf.image.total_variation(gen_flows_reshaped))
+            flow_diff1 = gen_flows[..., 1:, :, :, :] - gen_flows[..., :-1, :, :, :]
+            flow_diff2 = gen_flows[..., :, 1:, :, :] - gen_flows[..., :, :-1, :, :]
+            # sum over the multiple transformations but take the mean for the other dimensions
+            gen_tv_loss = tf.reduce_mean(tf.reduce_sum(tf.abs(flow_diff1), axis=(-2, -1))) + \
+                          tf.reduce_mean(tf.reduce_sum(tf.abs(flow_diff2), axis=(-2, -1)))
             gen_losses['gen_tv_loss'] = (gen_tv_loss, hparams.tv_weight)
         gan_weights = {'': hparams.gan_weight,
                        '_tuple': hparams.tuple_gan_weight,

@@ -1,10 +1,9 @@
 import numpy as np
 import tensorflow as tf
 from scipy import signal
-from tensorflow.python.util import nest
 
 from video_prediction.models import vgg_network
-from video_prediction.utils.tf_utils import PersistentOpEvaluator
+from video_prediction.utils.tf_utils import PersistentOpEvaluator, with_flat_batch
 
 
 def _axis(keep_axis, ndims):
@@ -119,19 +118,6 @@ def mean_squared_error(true, pred, keep_axis=None):
     return tf.reduce_mean(tf.square(error), axis=_axis(keep_axis, error.shape.ndims))
 
 
-def _with_flat_batch(flat_batch_fn):
-    def fn(x, *args, **kwargs):
-        shape = tf.shape(x)
-        flat_batch_shape = tf.concat([[-1], shape[-3:]], axis=0)
-        flat_batch_shape.set_shape([4])
-        flat_batch_x = tf.reshape(x, flat_batch_shape)
-        flat_batch_r = flat_batch_fn(flat_batch_x, *args, **kwargs)
-        r = nest.map_structure(lambda x: tf.reshape(x, tf.concat([shape[:-3], tf.shape(x)[1:]], axis=0)),
-                               flat_batch_r)
-        return r
-    return fn
-
-
 def structural_similarity(X, Y, K1=0.01, K2=0.03, sigma=1.5, win_size=None,
                           data_range=1.0, gaussian_weights=False,
                           use_sample_covariance=True, keep_axis=None):
@@ -176,7 +162,7 @@ def structural_similarity(X, Y, K1=0.01, K2=0.03, sigma=1.5, win_size=None,
         nch = tf.shape(X)[-1]
         kernel = tf.cast(tf.fill([win_size, win_size, nch, 1], 1 / win_size ** 2), X.dtype)
 
-    filter_func = _with_flat_batch(tf.nn.depthwise_conv2d)
+    filter_func = with_flat_batch(tf.nn.depthwise_conv2d)
     filter_args = {'filter': kernel, 'strides': [1] * 4, 'padding': 'VALID'}
 
     NP = win_size ** ndim
@@ -251,9 +237,9 @@ def vgg_cosine_similarity(image0, image1, keep_axis=None):
     image1 = tf.convert_to_tensor(image1, dtype=tf.float32)
 
     with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
-        _, features0 = _with_flat_batch(vgg_network.vgg16)(image0)
+        _, features0 = with_flat_batch(vgg_network.vgg16)(image0)
     with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
-        _, features1 = _with_flat_batch(vgg_network.vgg16)(image1)
+        _, features1 = with_flat_batch(vgg_network.vgg16)(image1)
 
     csim = 0.0
     for feature0, feature1 in zip(features0, features1):
@@ -299,7 +285,7 @@ class _VGGFeaturesExtractor(PersistentOpEvaluator):
     def initialize_graph(self):
         self._image_placeholder = tf.placeholder(dtype=tf.float32)
         with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
-            _, self._feature_op = _with_flat_batch(vgg_network.vgg16)(self._image_placeholder)
+            _, self._feature_op = with_flat_batch(vgg_network.vgg16)(self._image_placeholder)
         self._assign_from_values_fn = vgg_network.vgg_assign_from_values_fn(var_name_prefix='vgg/')
 
     def run(self, image):

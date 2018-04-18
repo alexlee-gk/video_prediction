@@ -1,6 +1,5 @@
 import itertools
 import os
-import tempfile
 import threading
 from collections import OrderedDict
 
@@ -544,3 +543,16 @@ class PersistentOpEvaluator(object):
         self._lazily_initialize()
         with self._session.as_default():
             return self.run(*args, **kwargs)
+
+
+def with_flat_batch(flat_batch_fn):
+    def fn(x, *args, **kwargs):
+        shape = tf.shape(x)
+        flat_batch_shape = tf.concat([[-1], shape[-3:]], axis=0)
+        flat_batch_shape.set_shape([4])
+        flat_batch_x = tf.reshape(x, flat_batch_shape)
+        flat_batch_r = flat_batch_fn(flat_batch_x, *args, **kwargs)
+        r = nest.map_structure(lambda x: tf.reshape(x, tf.concat([shape[:-3], tf.shape(x)[1:]], axis=0)),
+                               flat_batch_r)
+        return r
+    return fn
