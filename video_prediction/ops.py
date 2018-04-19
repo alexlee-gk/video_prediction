@@ -708,12 +708,12 @@ def upsample_conv2d(inputs, filters, kernel_size, strides=(1, 1), padding='SAME'
         if bias is None:
             with tf.variable_scope('upsample_conv2d'):
                 bias = tf.get_variable('bias', [filters], dtype=tf.float32, initializer=tf.zeros_initializer())
-                outputs = tf.nn.bias_add(outputs, bias)
         else:
             bias_shape = [filters]
             if bias_shape != bias.get_shape().as_list():
                 raise ValueError("Expecting bias with shape %s but instead got bias with shape %s" %
                                  (tuple(bias_shape), tuple(bias.get_shape().as_list())))
+        outputs = tf.nn.bias_add(outputs, bias)
     return outputs
 
 
@@ -750,12 +750,12 @@ def upsample_conv2d_v2(inputs, filters, kernel_size, strides=(1, 1), padding='SA
         if bias is None:
             with tf.variable_scope('upsample_conv2d'):
                 bias = tf.get_variable('bias', [filters], dtype=tf.float32, initializer=tf.zeros_initializer())
-                outputs = tf.nn.bias_add(outputs, bias)
         else:
             bias_shape = [filters]
             if bias_shape != bias.get_shape().as_list():
                 raise ValueError("Expecting bias with shape %s but instead got bias with shape %s" %
                                  (tuple(bias_shape), tuple(bias.get_shape().as_list())))
+        outputs = tf.nn.bias_add(outputs, bias)
     return outputs
 
 
@@ -845,12 +845,12 @@ def conv_pool2d(inputs, filters, kernel_size, strides=(1, 1), padding='SAME', ke
         if bias is None:
             with tf.variable_scope('conv_pool2d'):
                 bias = tf.get_variable('bias', [filters], dtype=tf.float32, initializer=tf.zeros_initializer())
-                outputs = tf.nn.bias_add(outputs, bias)
         else:
             bias_shape = [filters]
             if bias_shape != bias.get_shape().as_list():
                 raise ValueError("Expecting bias with shape %s but instead got bias with shape %s" %
                                  (tuple(bias_shape), tuple(bias.get_shape().as_list())))
+        outputs = tf.nn.bias_add(outputs, bias)
     return outputs
 
 
@@ -881,12 +881,12 @@ def conv_pool2d_v2(inputs, filters, kernel_size, strides=(1, 1), padding='SAME',
         if bias is None:
             with tf.variable_scope('conv_pool2d'):
                 bias = tf.get_variable('bias', [filters], dtype=tf.float32, initializer=tf.zeros_initializer())
-                outputs = tf.nn.bias_add(outputs, bias)
         else:
             bias_shape = [filters]
             if bias_shape != bias.get_shape().as_list():
                 raise ValueError("Expecting bias with shape %s but instead got bias with shape %s" %
                                  (tuple(bias_shape), tuple(bias.get_shape().as_list())))
+        outputs = tf.nn.bias_add(outputs, bias)
     return outputs
 
 
