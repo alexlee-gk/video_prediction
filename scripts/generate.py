@@ -1,3 +1,7 @@
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import argparse
 import errno
 import json
@@ -10,7 +14,6 @@ import tensorflow as tf
 
 from video_prediction import datasets, models
 from video_prediction.utils.ffmpeg_gif import save_gif
-from tensorflow.python.util import nest
 
 
 def main():
@@ -116,7 +119,7 @@ def main():
     if num_examples_per_epoch % args.batch_size != 0:
         raise ValueError('batch_size should evenly divide the dataset')
 
-    inputs, target = dataset.make_batch(args.batch_size)
+    inputs, _ = dataset.make_batch(args.batch_size)
     if not isinstance(model, models.GroundTruthVideoPredictionModel):
         # remove ground truth data past context_frames to prevent accidentally using it
         for k, v in inputs.items():
@@ -124,10 +127,9 @@ def main():
                 inputs[k] = v[:, :model.hparams.context_frames]
 
     input_phs = {k: tf.placeholder(v.dtype, v.shape, '%s_ph' % k) for k, v in inputs.items()}
-    target_ph = tf.placeholder(target.dtype, target.shape, 'targets_ph')
 
     with tf.variable_scope(''):
-        model.build_graph(input_phs, target_ph)
+        model.build_graph(input_phs)
 
     for output_dir in (args.output_gif_dir, args.output_png_dir):
         if not os.path.exists(output_dir):
@@ -150,7 +152,7 @@ def main():
         if args.num_samples and sample_ind >= args.num_samples:
             break
         try:
-            input_results, target_result = sess.run([inputs, target])
+            input_results = sess.run(inputs)
         except tf.errors.OutOfRangeError:
             break
         print("evaluation samples from %d to %d" % (sample_ind, sample_ind + args.batch_size))
@@ -165,8 +167,9 @@ def main():
                 save_gif(os.path.join(args.output_gif_dir, gen_images_fname),
                          gen_images_[:args.gif_length] if args.gif_length else gen_images_, fps=args.fps)
 
+                gen_image_fname_pattern = 'gen_image_%%05d_%%02d_%%0%dd.png' % max(2, len(str(len(gen_images_) - 1)))
                 for t, gen_image in enumerate(gen_images_):
-                    gen_image_fname = 'gen_image_%05d_%02d_%02d.png' % (sample_ind + i, stochastic_sample_ind, t)
+                    gen_image_fname = gen_image_fname_pattern % (sample_ind + i, stochastic_sample_ind, t)
                     gen_image = cv2.cvtColor(gen_image, cv2.COLOR_RGB2BGR)
                     cv2.imwrite(os.path.join(args.output_png_dir, gen_image_fname), gen_image)
 
