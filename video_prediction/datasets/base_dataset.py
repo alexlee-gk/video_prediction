@@ -306,7 +306,7 @@ class VideoDataset(BaseVideoDataset):
         features = dict()
         for i in range(self._max_sequence_length):
             for example_name, (name, shape) in self.state_like_names_and_shapes.items():
-                if example_name == 'images':  # special handling for image
+                if example_name.startswith('images'):  # special handling for image
                     features[name % i] = tf.FixedLenFeature([1], tf.string)
                 else:
                     features[name % i] = tf.FixedLenFeature(shape, tf.float32)
@@ -333,8 +333,9 @@ class VideoDataset(BaseVideoDataset):
                 action_like_seqs[example_name].append(features[name % i])
 
         # for this class, it's much faster to decode and preprocess the entire sequence before sampling a slice
-        _, image_shape = self.state_like_names_and_shapes['images']
-        state_like_seqs['images'] = self.decode_and_preprocess_images(state_like_seqs['images'], image_shape)
+        for example_name, (name, shape) in self.state_like_names_and_shapes.items():
+            if example_name.startswith('images'):
+                state_like_seqs[example_name] = self.decode_and_preprocess_images(state_like_seqs[example_name], shape)
 
         state_like_seqs, action_like_seqs = \
             self.slice_sequences(state_like_seqs, action_like_seqs, self._max_sequence_length)
@@ -352,7 +353,7 @@ class SequenceExampleVideoDataset(BaseVideoDataset):
         """
         sequence_features = dict()
         for example_name, (name, shape) in self.state_like_names_and_shapes.items():
-            if example_name == 'images':  # special handling for image
+            if example_name.startswith('images'):  # special handling for image
                 sequence_features[name] = tf.FixedLenSequenceFeature([1], tf.string)
             else:
                 sequence_features[name] = tf.FixedLenSequenceFeature(shape, tf.float32)
@@ -381,8 +382,9 @@ class SequenceExampleVideoDataset(BaseVideoDataset):
             self.slice_sequences(state_like_seqs, action_like_seqs, example_sequence_length)
 
         # decode and preprocess images on the sampled slice only
-        _, image_shape = self.state_like_names_and_shapes['images']
-        state_like_seqs['images'] = self.decode_and_preprocess_images(state_like_seqs['images'], image_shape)
+        for example_name, (name, shape) in self.state_like_names_and_shapes.items():
+            if example_name.startswith('images'):
+                state_like_seqs[example_name] = self.decode_and_preprocess_images(state_like_seqs[example_name], shape)
         return state_like_seqs, action_like_seqs
 
 
@@ -400,7 +402,7 @@ class VarLenFeatureVideoDataset(BaseVideoDataset):
         features = dict()
         features['sequence_length'] = tf.FixedLenFeature((), tf.int64)
         for example_name, (name, shape) in self.state_like_names_and_shapes.items():
-            if example_name == 'images':
+            if example_name.startswith('images'):
                 features[name] = tf.VarLenFeature(tf.string)
             else:
                 features[name] = tf.VarLenFeature(tf.float32)
@@ -414,7 +416,7 @@ class VarLenFeatureVideoDataset(BaseVideoDataset):
         state_like_seqs = OrderedDict()
         action_like_seqs = OrderedDict()
         for example_name, (name, shape) in self.state_like_names_and_shapes.items():
-            if example_name == 'images':
+            if example_name.startswith('images'):
                 seq = tf.sparse_tensor_to_dense(features[name], '')
             else:
                 seq = tf.sparse_tensor_to_dense(features[name])
@@ -429,8 +431,9 @@ class VarLenFeatureVideoDataset(BaseVideoDataset):
             self.slice_sequences(state_like_seqs, action_like_seqs, example_sequence_length)
 
         # decode and preprocess images on the sampled slice only
-        _, image_shape = self.state_like_names_and_shapes['images']
-        state_like_seqs['images'] = self.decode_and_preprocess_images(state_like_seqs['images'], image_shape)
+        for example_name, (name, shape) in self.state_like_names_and_shapes.items():
+            if example_name.startswith('images'):
+                state_like_seqs[example_name] = self.decode_and_preprocess_images(state_like_seqs[example_name], shape)
         return state_like_seqs, action_like_seqs
 
 
