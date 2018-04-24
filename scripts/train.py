@@ -207,7 +207,7 @@ def main():
             def should(freq):
                 return freq and ((step + 1) % freq == 0 or (step + 1) in (0, max_steps - start_step))
 
-            fetches = {"global_step": global_step}
+            fetches = {}
             if step >= 0:
                 fetches["train_op"] = train_model.train_op
 
@@ -242,9 +242,9 @@ def main():
             if should(args.progress_freq):
                 # global_step will have the correct step count if we resume from a checkpoint
                 steps_per_epoch = math.ceil(train_dataset.num_examples_per_epoch() / batch_size)
-                train_epoch = math.ceil(results["global_step"] / steps_per_epoch)
-                train_step = (results["global_step"] - 1) % steps_per_epoch + 1
-                print("progress  global step %d  epoch %d  step %d" % (results["global_step"], train_epoch, train_step))
+                train_epoch = math.ceil(global_step.eval() / steps_per_epoch)
+                train_step = (global_step.eval() - 1) % steps_per_epoch + 1
+                print("progress  global step %d  epoch %d  step %d" % (global_step.eval(), train_epoch, train_step))
                 if step >= 0:
                     print("          image/sec %0.1f  remaining %dm (%0.1fh) (%0.1fd)" %
                           (images_per_sec, remaining_time / 60, remaining_time / 60 / 60, remaining_time / 60 / 60 / 24))
@@ -259,26 +259,26 @@ def main():
 
             if should(args.summary_freq):
                 print("recording summary")
-                summary_writer.add_summary(results["summary"], results["global_step"])
+                summary_writer.add_summary(results["summary"], global_step.eval())
                 if step >= 0:
                     try:
                         from tensorboard.summary import scalar_pb
                         for name, scalar in zip(['images_per_sec', 'remaining_hours'],
                                                 [images_per_sec, remaining_time / 60 / 60]):
-                            summary_writer.add_summary(scalar_pb(name, scalar), results["global_step"])
+                            summary_writer.add_summary(scalar_pb(name, scalar), global_step.eval())
                     except ImportError:
                         pass
                 print("done")
             if should(args.image_summary_freq):
                 print("recording image summary")
                 summary_writer.add_summary(
-                    tf_utils.convert_tensor_to_gif_summary(results["image_summary"]), results["global_step"])
+                    tf_utils.convert_tensor_to_gif_summary(results["image_summary"]), global_step.eval())
                 print("done")
             if should(args.eval_summary_freq):
                 print("recording eval summary")
-                summary_writer.add_summary(results["eval_summary"], results["global_step"])
+                summary_writer.add_summary(results["eval_summary"], global_step.eval())
                 summary_writer.add_summary(
-                    tf_utils.convert_tensor_to_gif_summary(results["eval_image_summary"]), results["global_step"])
+                    tf_utils.convert_tensor_to_gif_summary(results["eval_image_summary"]), global_step.eval())
                 print("done")
             if should(args.summary_freq) or should(args.image_summary_freq) or should(args.eval_summary_freq):
                 summary_writer.flush()
@@ -294,7 +294,7 @@ def main():
                     os.makedirs(image_dir)
 
                 gif_clips = sess.run(val_tensor_clips)
-                gif_step = results["global_step"]
+                gif_step = global_step.eval()
                 for name, clip in gif_clips.items():
                     filename = "%08d-%s.gif" % (gif_step, name)
                     print("saving gif to", os.path.join(image_dir, filename))
