@@ -32,8 +32,8 @@ class CartgripperVideoDataset(SoftmotionVideoDataset):
                     self.state_like_names_and_shapes['images' + suffix] = \
                         '%%d/%s/encoded' % image_name, (48, 64, 3)
         if self.hparams.use_state:
-            self.state_like_names_and_shapes['states'] = '%d/endeffector_pos', (6,)
-            self.action_like_names_and_shapes['actions'] = '%d/action', (3,)
+            self.state_like_names_and_shapes['states'] = '%d/endeffector_pos', None
+            self.action_like_names_and_shapes['actions'] = '%d/action', None
         self._check_or_infer_shapes()
 
     def get_default_hparams_dict(self):
