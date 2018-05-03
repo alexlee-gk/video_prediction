@@ -40,6 +40,8 @@ def main():
     parser.add_argument("--model_hparams", type=str, help="a string of comma separated list of model hyperparameters")
     parser.add_argument("--model_hparams_dict", type=str, help="a json file of model hyperparameters")
 
+    parser.add_argument("--train_batch_sizes", type=int, nargs='+', help="splits for the training datasets")
+
     parser.add_argument("--summary_freq", type=int, default=1000, help="save summaries (except for image and eval summaries) every summary_freq steps")
     parser.add_argument("--image_summary_freq", type=int, default=5000, help="save image summaries every image_summary_freq steps")
     parser.add_argument("--eval_summary_freq", type=int, default=0, help="save eval summaries every eval_summary_freq steps")
@@ -143,8 +145,14 @@ def main():
 
     batch_size = train_model.hparams.batch_size
     with tf.variable_scope('') as training_scope:
-        assert batch_size % len(train_datasets) == 0
-        inputs, targets = zip(*[train_dataset.make_batch(batch_size // 2) for train_dataset in train_datasets])
+        if args.train_batch_sizes:
+            assert len(args.train_batch_sizes) == len(train_datasets)
+            assert sum(args.train_batch_sizes) == batch_size
+            inputs, targets = zip(*[train_dataset.make_batch(bs)
+                                    for train_dataset, bs in zip(train_datasets, args.train_batch_sizes)])
+        else:
+            assert batch_size % len(train_datasets) == 0
+            inputs, targets = zip(*[train_dataset.make_batch(batch_size // 2) for train_dataset in train_datasets])
         inputs = nest.map_structure(lambda *x: tf.concat(x, axis=0), *inputs)
         targets = nest.map_structure(lambda *x: tf.concat(x, axis=0), *targets)
         train_model.build_graph(inputs, targets)
