@@ -140,8 +140,11 @@ def main():
     VideoPredictionModel = models.get_model_class(args.model)
     # override hparams from first dataset for train model
     train_model = VideoPredictionModel(mode='train', hparams_dict=override_hparams_dict(train_datasets[0]), hparams=args.model_hparams)
-    val_models = [VideoPredictionModel(mode='val', hparams_dict=override_hparams_dict(val_dataset), hparams=args.model_hparams)
-                  for val_dataset in val_datasets]
+    if val_input_dirs == args.input_dirs:
+        val_models = [VideoPredictionModel(mode='val', hparams_dict=override_hparams_dict(val_datasets[0]), hparams=args.model_hparams)]
+    else:
+        val_models = [VideoPredictionModel(mode='val', hparams_dict=override_hparams_dict(val_dataset), hparams=args.model_hparams)
+                      for val_dataset in val_datasets]
 
     batch_size = train_model.hparams.batch_size
     with tf.variable_scope('') as training_scope:
@@ -156,9 +159,20 @@ def main():
         inputs = nest.map_structure(lambda *x: tf.concat(x, axis=0), *inputs)
         targets = nest.map_structure(lambda *x: tf.concat(x, axis=0), *targets)
         train_model.build_graph(inputs, targets)
-    for val_model, val_dataset in zip(val_models, val_datasets):
+    if val_input_dirs == args.input_dirs:
         with tf.variable_scope(training_scope, reuse=True):
-            val_model.build_graph(*val_dataset.make_batch(batch_size))
+            if args.train_batch_sizes:
+                inputs, targets = zip(*[train_dataset.make_batch(bs)
+                                        for train_dataset, bs in zip(train_datasets, args.train_batch_sizes)])
+            else:
+                inputs, targets = zip(*[train_dataset.make_batch(batch_size // 2) for train_dataset in train_datasets])
+            inputs = nest.map_structure(lambda *x: tf.concat(x, axis=0), *inputs)
+            targets = nest.map_structure(lambda *x: tf.concat(x, axis=0), *targets)
+            val_models[0].build_graph(inputs, targets)
+    else:
+        for val_model, val_dataset in zip(val_models, val_datasets):
+            with tf.variable_scope(training_scope, reuse=True):
+                val_model.build_graph(*val_dataset.make_batch(batch_size))
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
