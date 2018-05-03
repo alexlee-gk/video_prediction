@@ -124,13 +124,14 @@ class BaseVideoDataset(object):
         dataset = dataset.map(self.parser, num_parallel_calls=batch_size)
         dataset.prefetch(2 * batch_size)
 
-        # Could shuffle individual samples but it becomes too slow. Just shuffle filenames instead.
         # if self.mode == 'train':
         #     min_queue_examples = int(
         #         self.num_examples_per_epoch() * 0.4)
         #     # Ensure that the capacity is sufficiently large to provide good random
         #     # shuffling.
         #     dataset = dataset.shuffle(buffer_size=min_queue_examples + 3 * batch_size)
+        if self.mode == 'train':
+            dataset = dataset.shuffle(buffer_size=128 * 8)
 
         dataset = dataset.repeat(self.num_epochs)
         dataset = dataset.batch(batch_size)
