@@ -14,6 +14,7 @@ from collections import OrderedDict
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python.util import nest
 
 from video_prediction import datasets, models
 from video_prediction.utils import ffmpeg_gif, tf_utils
@@ -21,9 +22,9 @@ from video_prediction.utils import ffmpeg_gif, tf_utils
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input_dir", type=str, required=True, help="either a directory containing subdirectories "
-                                                                     "train, val, test, etc, or a directory containing "
-                                                                     "the tfrecords")
+    parser.add_argument("--input_dirs", "--input_dir", type=str, nargs='+', required=True,
+                        help="either a directory containing subdirectories train, val, test, "
+                             "etc, or a directory containing the tfrecords")
     parser.add_argument("--val_input_dirs", type=str, nargs='+', help="directories containing the tfrecords. default: [input_dir]")
     parser.add_argument("--logs_dir", default='logs', help="ignored if output_dir is specified")
     parser.add_argument("--output_dir", help="output directory where json files, summary, model, gifs, etc are saved. "
@@ -116,15 +117,16 @@ def main():
     print('------------------------------------- End --------------------------------------')
 
     VideoDataset = datasets.get_dataset_class(args.dataset)
-    train_dataset = VideoDataset(args.input_dir, mode='train', hparams_dict=dataset_hparams_dict, hparams=args.dataset_hparams)
-    val_input_dirs = args.val_input_dirs or [args.input_dir]
+    train_datasets = [VideoDataset(input_dir, mode='train', hparams_dict=dataset_hparams_dict, hparams=args.dataset_hparams)
+                      for input_dir in args.input_dirs]
+    val_input_dirs = args.val_input_dirs or args.input_dirs
     val_datasets = [VideoDataset(val_input_dir, mode='val', hparams_dict=dataset_hparams_dict, hparams=args.dataset_hparams)
                     for val_input_dir in val_input_dirs]
-    if len(val_input_dirs) > 1:
-        if isinstance(val_datasets[-1], datasets.KTHVideoDataset):
-            val_datasets[-1].set_sequence_length(40)
-        else:
-            val_datasets[-1].set_sequence_length(30)
+    # if len(val_input_dirs) > 1:
+    #     if isinstance(val_datasets[-1], datasets.KTHVideoDataset):
+    #         val_datasets[-1].set_sequence_length(40)
+    #     else:
+    #         val_datasets[-1].set_sequence_length(30)
 
     def override_hparams_dict(dataset):
         hparams_dict = dict(model_hparams_dict)
@@ -134,13 +136,18 @@ def main():
         return hparams_dict
 
     VideoPredictionModel = models.get_model_class(args.model)
-    train_model = VideoPredictionModel(mode='train', hparams_dict=override_hparams_dict(train_dataset), hparams=args.model_hparams)
+    # override hparams from first dataset for train model
+    train_model = VideoPredictionModel(mode='train', hparams_dict=override_hparams_dict(train_datasets[0]), hparams=args.model_hparams)
     val_models = [VideoPredictionModel(mode='val', hparams_dict=override_hparams_dict(val_dataset), hparams=args.model_hparams)
                   for val_dataset in val_datasets]
 
     batch_size = train_model.hparams.batch_size
     with tf.variable_scope('') as training_scope:
-        train_model.build_graph(*train_dataset.make_batch(batch_size))
+        assert batch_size % len(train_datasets) == 0
+        inputs, targets = zip(*[train_dataset.make_batch(batch_size // 2) for train_dataset in train_datasets])
+        inputs = nest.map_structure(lambda *x: tf.concat(x, axis=0), *inputs)
+        targets = nest.map_structure(lambda *x: tf.concat(x, axis=0), *targets)
+        train_model.build_graph(inputs, targets)
     for val_model, val_dataset in zip(val_models, val_datasets):
         with tf.variable_scope(training_scope, reuse=True):
             val_model.build_graph(*val_dataset.make_batch(batch_size))
@@ -150,7 +157,7 @@ def main():
     with open(os.path.join(args.output_dir, "options.json"), "w") as f:
         f.write(json.dumps(vars(args), sort_keys=True, indent=4))
     with open(os.path.join(args.output_dir, "dataset_hparams.json"), "w") as f:
-        f.write(json.dumps(train_dataset.hparams.values(), sort_keys=True, indent=4))
+        f.write(json.dumps(train_datasets[0].hparams.values(), sort_keys=True, indent=4))  # save hparams from first dataset
     with open(os.path.join(args.output_dir, "model_hparams.json"), "w") as f:
         f.write(json.dumps(train_model.hparams.values(), sort_keys=True, indent=4))
 
@@ -241,7 +248,7 @@ def main():
 
             if should(args.progress_freq):
                 # global_step will have the correct step count if we resume from a checkpoint
-                steps_per_epoch = math.ceil(train_dataset.num_examples_per_epoch() / batch_size)
+                steps_per_epoch = math.ceil(sum([train_dataset.num_examples_per_epoch() for train_dataset in train_datasets]) / batch_size)
                 train_epoch = math.ceil(global_step.eval() / steps_per_epoch)
                 train_step = (global_step.eval() - 1) % steps_per_epoch + 1
                 print("progress  global step %d  epoch %d  step %d" % (global_step.eval(), train_epoch, train_step))
