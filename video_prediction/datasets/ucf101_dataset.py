@@ -21,8 +21,8 @@ class UCF101VideoDataset(VarLenFeatureVideoDataset):
         default_hparams = super(UCF101VideoDataset, self).get_default_hparams_dict()
         hparams = dict(
             context_frames=4,
-            sequence_length=12,
-            random_crop_size=64,
+            sequence_length=8,
+            random_crop_size=0,
             use_state=False,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
@@ -37,16 +37,21 @@ class UCF101VideoDataset(VarLenFeatureVideoDataset):
         if self.hparams.scale_size:
             raise NotImplementedError
         image_buffers = tf.reshape(image_buffers, [-1])
-        image_size = tf.image.extract_jpeg_shape(image_buffers[0])[:2]  # should be the same as image_shape[:2]
-        random_crop_size = [self.hparams.random_crop_size] * 2
-        crop_y = tf.random_uniform([], minval=0, maxval=image_size[0] - random_crop_size[0], dtype=tf.int32)
-        crop_x = tf.random_uniform([], minval=0, maxval=image_size[1] - random_crop_size[1], dtype=tf.int32)
-        crop_window = [crop_y, crop_x] + random_crop_size
         if not isinstance(image_buffers, (list, tuple)):
             image_buffers = tf.unstack(image_buffers)
-        images = [tf.image.decode_and_crop_jpeg(image_buffer, crop_window) for image_buffer in image_buffers]
-        images = tf.image.convert_image_dtype(images, dtype=tf.float32)
-        images.set_shape([None] + random_crop_size + [image_shape[-1]])
+        image_size = tf.image.extract_jpeg_shape(image_buffers[0])[:2]  # should be the same as image_shape[:2]
+        if self.hparams.random_crop_size:
+            random_crop_size = [self.hparams.random_crop_size] * 2
+            crop_y = tf.random_uniform([], minval=0, maxval=image_size[0] - random_crop_size[0], dtype=tf.int32)
+            crop_x = tf.random_uniform([], minval=0, maxval=image_size[1] - random_crop_size[1], dtype=tf.int32)
+            crop_window = [crop_y, crop_x] + random_crop_size
+            images = [tf.image.decode_and_crop_jpeg(image_buffer, crop_window) for image_buffer in image_buffers]
+            images = tf.image.convert_image_dtype(images, dtype=tf.float32)
+            images.set_shape([None] + random_crop_size + [image_shape[-1]])
+        else:
+            images = [tf.image.decode_jpeg(image_buffer) for image_buffer in image_buffers]
+            images = tf.image.convert_image_dtype(images, dtype=tf.float32)
+            images.set_shape([None] + list(image_shape))
         # TODO: only random crop for training
         return images
 
