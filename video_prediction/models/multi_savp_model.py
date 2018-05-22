@@ -617,7 +617,7 @@ class MultiSAVPVideoPredictionModel(SAVPVideoPredictionModel):
             if (hparams.l1_weight or hparams.l2_weight) and hparams.num_scales > 1:
                 raise NotImplementedError
             if hparams.tv_weight:
-                gen_flows = outputs.get('gen_flows_enc' + suffix, outputs['gen_flows' + suffix])
+                gen_flows = outputs.get('gen_flows%s_enc' % suffix, outputs['gen_flows' + suffix])
                 flow_diff1 = gen_flows[..., 1:, :, :, :] - gen_flows[..., :-1, :, :, :]
                 flow_diff2 = gen_flows[..., :, 1:, :, :] - gen_flows[..., :, :-1, :, :]
                 # sum over the multiple transformations but take the mean for the other dimensions
