@@ -270,12 +270,12 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         for out_channels, use_conv_rnn in self.encoder_layer_specs:
             conv_rnn_height //= 2
             conv_rnn_width //= 2
-            if use_conv_rnn:
+            if use_conv_rnn and not self.hparams.ablation_rnn:
                 conv_rnn_state_sizes.append(tf.TensorShape([conv_rnn_height, conv_rnn_width, out_channels]))
         for out_channels, use_conv_rnn in self.decoder_layer_specs:
             conv_rnn_height *= 2
             conv_rnn_width *= 2
-            if use_conv_rnn:
+            if use_conv_rnn and not self.hparams.ablation_rnn:
                 conv_rnn_state_sizes.append(tf.TensorShape([conv_rnn_height, conv_rnn_width, out_channels]))
         if self.hparams.conv_rnn == 'lstm':
             conv_rnn_state_sizes = [tf.nn.rnn_cell.LSTMStateTuple(conv_rnn_state_size, conv_rnn_state_size)
@@ -284,7 +284,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                       'gen_image': tf.TensorShape(image_shape),
                       'last_images': [tf.TensorShape(image_shape)] * self.hparams.last_frames,
                       'conv_rnn_states': conv_rnn_state_sizes}
-        if 'zs' in inputs and self.hparams.use_rnn_z:
+        if 'zs' in inputs and self.hparams.use_rnn_z and not self.hparams.ablation_rnn:
             rnn_z_state_size = tf.TensorShape([self.hparams.nz])
             if self.hparams.rnn == 'lstm':
                 rnn_z_state_size = tf.nn.rnn_cell.LSTMStateTuple(rnn_z_state_size, rnn_z_state_size)
@@ -406,8 +406,12 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
 
         if 'zs' in inputs:
             if self.hparams.use_rnn_z:
-                with tf.variable_scope('%s_z' % self.hparams.rnn):
-                    rnn_z, rnn_z_state = self._rnn_func(inputs['zs'], states['rnn_z_state'], self.hparams.nz)
+                with tf.variable_scope('%s_z' % ('fc' if self.hparams.ablation_rnn else self.hparams.rnn)):
+                    if self.hparams.ablation_rnn:
+                        rnn_z = dense(inputs['zs'], self.hparams.nz)
+                        rnn_z = tf.nn.tanh(rnn_z)
+                    else:
+                        rnn_z, rnn_z_state = self._rnn_func(inputs['zs'], states['rnn_z_state'], self.hparams.nz)
                 state_action_z.append(rnn_z)
             else:
                 state_action_z.append(inputs['zs'])
@@ -442,14 +446,19 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                 h = norm_layer(h)
                 h = tf.nn.relu(h)
             if use_conv_rnn:
-                conv_rnn_state = conv_rnn_states[len(new_conv_rnn_states)]
-                with tf.variable_scope('%s_h%d' % (self.hparams.conv_rnn, i)):
+                with tf.variable_scope('%s_h%d' % ('conv' if self.hparams.ablation_rnn else self.hparams.conv_rnn, i)):
                     if self.hparams.where_add == 'all':
                         conv_rnn_h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
                     else:
                         conv_rnn_h = h
-                    conv_rnn_h, conv_rnn_state = self._conv_rnn_func(conv_rnn_h, conv_rnn_state, out_channels)
-                new_conv_rnn_states.append(conv_rnn_state)
+                    if self.hparams.ablation_rnn:
+                        conv_rnn_h = conv2d(conv_rnn_h, out_channels, kernel_size=(5, 5))
+                        conv_rnn_h = norm_layer(conv_rnn_h)
+                        conv_rnn_h = tf.nn.relu(conv_rnn_h)
+                    else:
+                        conv_rnn_state = conv_rnn_states[len(new_conv_rnn_states)]
+                        conv_rnn_h, conv_rnn_state = self._conv_rnn_func(conv_rnn_h, conv_rnn_state, out_channels)
+                        new_conv_rnn_states.append(conv_rnn_state)
             layers.append((h, conv_rnn_h) if use_conv_rnn else (h,))
 
         num_encoder_layers = len(layers)
@@ -465,14 +474,19 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                 h = norm_layer(h)
                 h = tf.nn.relu(h)
             if use_conv_rnn:
-                conv_rnn_state = conv_rnn_states[len(new_conv_rnn_states)]
-                with tf.variable_scope('%s_h%d' % (self.hparams.conv_rnn, len(layers))):
+                with tf.variable_scope('%s_h%d' % ('conv' if self.hparams.ablation_rnn else self.hparams.conv_rnn, len(layers))):
                     if self.hparams.where_add == 'all':
                         conv_rnn_h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
                     else:
                         conv_rnn_h = h
-                    conv_rnn_h, conv_rnn_state = self._conv_rnn_func(conv_rnn_h, conv_rnn_state, out_channels)
-                new_conv_rnn_states.append(conv_rnn_state)
+                    if self.hparams.ablation_rnn:
+                        conv_rnn_h = conv2d(conv_rnn_h, out_channels, kernel_size=(5, 5))
+                        conv_rnn_h = norm_layer(conv_rnn_h)
+                        conv_rnn_h = tf.nn.relu(conv_rnn_h)
+                    else:
+                        conv_rnn_state = conv_rnn_states[len(new_conv_rnn_states)]
+                        conv_rnn_h, conv_rnn_state = self._conv_rnn_func(conv_rnn_h, conv_rnn_state, out_channels)
+                        new_conv_rnn_states.append(conv_rnn_state)
             layers.append((h, conv_rnn_h) if use_conv_rnn else (h,))
         assert len(new_conv_rnn_states) == len(conv_rnn_states)
 
@@ -615,7 +629,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                       'gen_image': gen_image,
                       'last_images': last_images,
                       'conv_rnn_states': new_conv_rnn_states}
-        if 'zs' in inputs and self.hparams.use_rnn_z:
+        if 'zs' in inputs and self.hparams.use_rnn_z and not self.hparams.ablation_rnn:
             new_states['rnn_z_state'] = rnn_z_state
         if 'pix_distribs' in inputs:
             new_states['gen_pix_distrib'] = gen_pix_distrib
@@ -715,6 +729,7 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
             nef=64,
             use_rnn_z=True,
             ablation_conv_rnn_norm=False,
+            ablation_rnn=False,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
