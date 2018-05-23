@@ -370,6 +370,8 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             acvideo_vae_gan_weight=0.0,
             image_sn_gan_weight=0.0,
             image_sn_vae_gan_weight=0.0,
+            images_sn_gan_weight=0.0,
+            images_sn_vae_gan_weight=0.0,
             video_sn_gan_weight=0.0,
             video_sn_vae_gan_weight=0.0,
             gan_feature_l2_weight=0.0,
@@ -688,6 +690,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                        '_video': hparams.video_gan_weight,
                        '_acvideo': hparams.acvideo_gan_weight,
                        '_image_sn': hparams.image_sn_gan_weight,
+                       '_images_sn': hparams.images_sn_gan_weight,
                        '_video_sn': hparams.video_sn_gan_weight}
         for infix, gan_weight in gan_weights.items():
             if gan_weight:
@@ -719,6 +722,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                            '_video': hparams.video_vae_gan_weight,
                            '_acvideo': hparams.acvideo_vae_gan_weight,
                            '_image_sn': hparams.image_sn_vae_gan_weight,
+                           '_images_sn': hparams.images_sn_vae_gan_weight,
                            '_video_sn': hparams.video_sn_vae_gan_weight}
         for infix, vae_gan_weight in vae_gan_weights.items():
             if vae_gan_weight:
@@ -761,6 +765,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                        '_video': hparams.video_gan_weight,
                        '_acvideo': hparams.acvideo_gan_weight,
                        '_image_sn': hparams.image_sn_gan_weight,
+                       '_images_sn': hparams.images_sn_gan_weight,
                        '_video_sn': hparams.video_sn_gan_weight}
         for infix, gan_weight in gan_weights.items():
             if gan_weight:
@@ -774,6 +779,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                            '_video': hparams.video_vae_gan_weight,
                            '_acvideo': hparams.acvideo_vae_gan_weight,
                            '_image_sn': hparams.image_sn_vae_gan_weight,
+                           '_images_sn': hparams.images_sn_vae_gan_weight,
                            '_video_sn': hparams.video_sn_vae_gan_weight}
         for infix, vae_gan_weight in vae_gan_weights.items():
             if vae_gan_weight:

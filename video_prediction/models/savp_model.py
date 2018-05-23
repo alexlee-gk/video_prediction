@@ -169,7 +169,8 @@ def discriminator_fn(targets, inputs=None, hparams=None):
         _, mocogan_outputs = mocogan_model.discriminator_fn(targets, inputs=inputs, hparams=hparams)
         outputs.update(mocogan_outputs)
     if hparams.image_sn_gan_weight or hparams.image_sn_vae_gan_weight or \
-            hparams.video_sn_gan_weight or hparams.video_sn_vae_gan_weight:
+            hparams.video_sn_gan_weight or hparams.video_sn_vae_gan_weight or \
+            hparams.images_sn_gan_weight or hparams.images_sn_vae_gan_weight:
         _, spectral_norm_outputs = spectral_norm_model.discriminator_fn(targets, inputs=inputs, hparams=hparams)
         outputs.update(spectral_norm_outputs)
     return None, outputs

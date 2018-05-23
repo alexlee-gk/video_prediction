@@ -120,4 +120,11 @@ def discriminator_fn(targets, inputs=None, hparams=None):
         outputs['discrim_video_sn_logits'] = video_logits
         for i, video_feature in enumerate(video_features):
             outputs['discrim_video_sn_feature%d' % i] = video_feature
+    if hparams.images_sn_gan_weight or hparams.images_sn_vae_gan_weight:
+        # assume single-image discriminator is not used since otherwise variable scopes would collide
+        assert not (hparams.image_sn_gan_weight or hparams.image_sn_vae_gan_weight)
+        images_sample = tf.reshape(clip_sample, [batch_size * hparams.clip_length] + clip_sample.shape.as_list()[2:])
+        images_features = create_image_sn_discriminator(images_sample, ndf=hparams.ndf)
+        images_features, images_logits = images_features[:-1], images_features[-1]
+        outputs['discrim_images_sn_logits'] = tf.reshape(images_logits, [batch_size, hparams.clip_length] + images_logits.shape.as_list()[1:])
     return None, outputs
