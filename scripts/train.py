@@ -268,7 +268,7 @@ def main():
                 if isinstance(train_model.learning_rate, tf.Tensor):
                     print("learning_rate", results["learning_rate"])
             if should(args.metrics_freq):
-                for name, metric in results['metrics']:
+                for name, metric in results['metrics'].items():
                     print(name, metric)
 
             if should(args.save_freq):
