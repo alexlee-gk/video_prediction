@@ -84,6 +84,7 @@ def _int64_feature(value):
 def partition_data(input_dir, train_test_list_dir):
     train_list_fnames = glob.glob(os.path.join(train_test_list_dir, 'trainlist*.txt'))
     test_list_fnames = glob.glob(os.path.join(train_test_list_dir, 'testlist*.txt'))
+    test_list_fnames_mathieu = [os.path.join(train_test_list_dir, 'testlist01.txt')]
 
     def read_fnames(list_fnames):
         fnames = []
@@ -98,15 +99,19 @@ def partition_data(input_dir, train_test_list_dir):
 
     train_fnames = read_fnames(train_list_fnames)
     test_fnames = read_fnames(test_list_fnames)
+    test_fnames_mathieu = read_fnames(test_list_fnames_mathieu)
 
     train_fnames = [os.path.join(input_dir, train_fname) for train_fname in train_fnames]
     test_fnames = [os.path.join(input_dir, test_fname) for test_fname in test_fnames]
+    test_fnames_mathieu = [os.path.join(input_dir, test_fname) for test_fname in test_fnames_mathieu]
+    # only use every 10 videos as in Mathieu et al.
+    test_fnames_mathieu = test_fnames_mathieu[::10]
 
     random.shuffle(train_fnames)
 
     pivot = int(0.95 * len(train_fnames))
     train_fnames, val_fnames = train_fnames[:pivot], train_fnames[pivot:]
-    return train_fnames, val_fnames, test_fnames
+    return train_fnames, val_fnames, test_fnames, test_fnames_mathieu
 
 
 def read_video(fname):
@@ -182,7 +187,7 @@ def main():
     parser.add_argument('--num_workers', type=int, default=1, help='number of parallel workers')
     args = parser.parse_args()
 
-    partition_names = ['train', 'val', 'test']
+    partition_names = ['train', 'val', 'test', 'test_mathieu']
     partition_fnames = partition_data(args.input_dir, args.train_test_list_dir)
 
     for partition_name, partition_fnames in zip(partition_names, partition_fnames):
