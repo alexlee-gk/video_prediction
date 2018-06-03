@@ -11,6 +11,10 @@ def l2_loss(pred, target):
     return tf.reduce_mean(tf.square(target - pred))
 
 
+def charbonnier_loss(x, epsilon=0.001):
+    return tf.reduce_mean(tf.sqrt(tf.square(x) + tf.square(epsilon)))
+
+
 def gan_loss(logits, labels, gan_loss_type):
     # use 1.0 (or 1.0 - discrim_label_smooth) for real data and 0.0 for fake data
     if gan_loss_type == 'GAN':
