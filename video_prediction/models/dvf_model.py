@@ -140,9 +140,10 @@ def generator_fn(inputs, mode, hparams=None):
                 h6 = tf.concat([h6, h0], axis=-1)
                 h6 = slim.conv2d(h6, 64, [5, 5], stride=1, scope='conv7')
 
-    extrap_length = hparams.sequence_length - hparams.context_frames
-    flows_masks = slim.conv2d(h6, 5 * extrap_length, [5, 5], stride=1, activation_fn=tf.tanh,
-                              normalizer_fn=None, scope='conv8')
+        extrap_length = hparams.sequence_length - hparams.context_frames
+        flows_masks = slim.conv2d(h6, 5 * extrap_length, [5, 5], stride=1, activation_fn=tf.tanh,
+                                  normalizer_fn=None, scope='conv8')
+
     flows_masks = tf.split(flows_masks, extrap_length, axis=-1)
 
     gen_images = []
