@@ -6,6 +6,7 @@ import tensorflow.contrib.slim as slim
 
 import video_prediction as vp
 from video_prediction.models import VideoPredictionModel
+from video_prediction.ops import dense, tile_concat
 from video_prediction.utils import tf_utils
 
 
@@ -102,6 +103,32 @@ def generator_fn(inputs, mode, hparams=None):
     images = inputs['images']
     input_images = tf.concat(tf.unstack(images[:hparams.context_frames], axis=0), axis=-1)
 
+    gen_states = []
+    for t in range(hparams.context_frames, hparams.sequence_length):
+        state_action = []
+        if 'actions' in inputs:
+            state_action.append(inputs['actions'][t - 1])
+        if 'states' in inputs:
+            state_action.append(gen_states[-1] if gen_states else inputs['states'][t - 1])
+            state_action = tf.concat(state_action, axis=-1)
+            with tf.name_scope('gen_states'):
+                with tf.variable_scope('state_pred%d' % t):
+                    gen_state = dense(state_action, inputs['states'].shape[-1])
+            gen_states.append(gen_state)
+
+    states_actions = []
+    if 'actions' in inputs:
+        states_actions += tf.unstack(inputs['actions'][:hparams.sequence_length - 1], axis=0)
+    if 'states' in inputs:
+        states_actions += tf.unstack(inputs['states'][:hparams.context_frames], axis=0)
+        states_actions += gen_states
+    if states_actions:
+        states_actions = tf.concat(states_actions, axis=-1)
+        # don't backpropagate the convnet through the state dynamics
+        states_actions = tf.stop_gradient(states_actions)
+    else:
+        states_actions = tf.zeros([images.shape[1], 0])
+
     with slim.arg_scope([slim.conv2d],
                         activation_fn=tf.nn.relu,
                         weights_initializer=tf.truncated_normal_initializer(0.0, 0.01),
@@ -126,6 +153,7 @@ def generator_fn(inputs, mode, hparams=None):
                 size2 = tf.shape(h2)[-3:-1]
 
                 h3 = slim.max_pool2d(h2, [2, 2], scope='pool3')
+                h3 = tile_concat([h3, states_actions[:, None, None, :]], axis=-1)
                 h3 = slim.conv2d(h3, 256, [3, 3], stride=1, scope='conv4')
 
                 h4 = tf.image.resize_bilinear(h3, size2)
@@ -154,6 +182,7 @@ def generator_fn(inputs, mode, hparams=None):
         flow_1, flow_2, mask = tf.split(flows_mask, [2, 2, 1], axis=-1)
         gen_flows_1.append(flow_1)
         gen_flows_2.append(flow_2)
+        mask = 0.5 * (1.0 + mask)
         masks.append(mask)
 
         linspace_x = tf.linspace(-1.0, 1.0, size0[1])
@@ -171,7 +200,6 @@ def generator_fn(inputs, mode, hparams=None):
         output_1 = bilinear_interp(images[0], coor_x_1, coor_y_1, 'interpolate')
         output_2 = bilinear_interp(images[1], coor_x_2, coor_y_2, 'interpolate')
 
-        mask = 0.5 * (1.0 + mask)
         gen_image = mask * output_1 + (1.0 - mask) * output_2
         gen_images.append(gen_image)
     gen_images = tf.stack(gen_images, axis=0)
@@ -185,6 +213,9 @@ def generator_fn(inputs, mode, hparams=None):
         'gen_flows_2': gen_flows_2,
         'masks': masks,
     }
+    if 'states' in inputs:
+        gen_states = tf.stack(gen_states, axis=0)
+        outputs['gen_states'] = gen_states
     return gen_images, outputs
 
 
@@ -219,7 +250,7 @@ class DVFVideoPredictionModel(VideoPredictionModel):
             gen_images = outputs['gen_images']
             target_images = targets
             gen_charbonnier_loss = vp.losses.charbonnier_loss(target_images - gen_images)
-            gen_losses['gegen_charbonnier_loss'] = (gen_charbonnier_loss, hparams.charbonnier_weight)
+            gen_losses['gen_charbonnier_loss'] = (gen_charbonnier_loss, hparams.charbonnier_weight)
         if hparams.tv_charbonnier_weight:
             gen_tv_charbonnier_loss = \
                 total_variation_charbonnier(outputs['gen_flows_1']) + \
@@ -228,4 +259,9 @@ class DVFVideoPredictionModel(VideoPredictionModel):
         if hparams.mask_charbonnier_weight:
             gen_mask_charbonnier_loss = total_variation_charbonnier(outputs['masks'])
             gen_losses['gen_mask_charbonnier_loss'] = (gen_mask_charbonnier_loss, hparams.mask_charbonnier_weight)
+        if hparams.state_weight:
+            gen_states = outputs['gen_states']
+            target_states = inputs['states'][hparams.context_frames:]
+            gen_state_loss = vp.losses.l2_loss(gen_states, target_states)
+            gen_losses["gen_state_loss"] = (gen_state_loss, hparams.state_weight)
         return gen_losses
