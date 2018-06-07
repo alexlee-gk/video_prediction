@@ -4,6 +4,7 @@ from .non_trainable_model import NonTrainableVideoPredictionModel
 from .non_trainable_model import GroundTruthVideoPredictionModel, RepeatVideoPredictionModel
 from .pix2pix_model import Pix2PixVideoPredictionModel
 from .savp_model import SAVPVideoPredictionModel
+from .savp_jump_model import SAVPJumpVideoPredictionModel
 from .dvf_model import DVFVideoPredictionModel
 from .flow_model import FlowVideoPredictionModel
 from .dna_model import DNAVideoPredictionModel
@@ -19,6 +20,7 @@ def get_model_class(model):
         'repeat': 'RepeatVideoPredictionModel',
         'pix2pix': 'Pix2PixVideoPredictionModel',
         'savp': 'SAVPVideoPredictionModel',
+        'savp_jump': 'SAVPJumpVideoPredictionModel',
         'dvf': 'DVFVideoPredictionModel',
         'flow': 'FlowVideoPredictionModel',
         'dna': 'DNAVideoPredictionModel',
