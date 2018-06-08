@@ -66,6 +66,23 @@ def structural_similarity_finn_np(true, pred, keep_axis=None):
                                     keep_axis=keep_axis)
 
 
+def structural_similarity_mcnet_np(true, pred, keep_axis=None):
+    from PIL import Image
+    import ssim as pyssim
+    assert true.shape == pred.shape
+    shape = true.shape
+    true = true.reshape((-1,) + shape[-3:])
+    pred = pred.reshape((-1,) + shape[-3:])
+    ssim = []
+    for true_y, pred_y in zip(true, pred):
+        ssim.append(
+            pyssim.compute_ssim(Image.fromarray((true_y * 255).astype(np.uint8)),
+                                Image.fromarray((pred_y * 255).astype(np.uint8)))
+        )
+    ssim = np.reshape(ssim, shape[:-3])
+    return np.mean(ssim, axis=_axis(keep_axis, ssim.ndim))
+
+
 def expected_pixel_distribution_np(pix_distrib):
     pix_distrib = pix_distrib / np.sum(pix_distrib, axis=(-3, -2), keepdims=True)
     height, width = pix_distrib.shape[-3:-1]

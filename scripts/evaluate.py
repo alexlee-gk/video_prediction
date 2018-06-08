@@ -143,11 +143,12 @@ def save_prediction_eval_results(task_dir, results, model_hparams, sample_start_
     context_frames = model_hparams.context_frames
     context_images = results['images'][:, :context_frames]
     images = results['eval_images']
-    metric_names = ['psnr', 'ssim', 'ssim_scikit', 'ssim_finn', 'vgg_csim']
+    metric_names = ['psnr', 'ssim', 'ssim_scikit', 'ssim_finn', 'ssim_mcnet', 'vgg_csim']
     metric_fns = [metrics.peak_signal_to_noise_ratio_np,
                   metrics.structural_similarity_np,
                   metrics.structural_similarity_scikit_np,
                   metrics.structural_similarity_finn_np,
+                  metrics.structural_similarity_mcnet_np,
                   None]
     subtasks = subtasks or ['max']
     for metric_name, metric_fn in zip(metric_names, metric_fns):
@@ -477,11 +478,12 @@ def main():
                 fetches.update(model.eval_metrics.items())
                 results = sess.run(fetches, feed_dict=feed_dict)
             else:
-                metric_names = ['psnr', 'ssim', 'ssim_scikit', 'ssim_finn', 'vgg_csim']
+                metric_names = ['psnr', 'ssim', 'ssim_scikit', 'ssim_finn', 'ssim_mcnet', 'vgg_csim']
                 metric_fns = [metrics.peak_signal_to_noise_ratio_np,
                               metrics.structural_similarity_np,
                               metrics.structural_similarity_scikit_np,
                               metrics.structural_similarity_finn_np,
+                              metrics.structural_similarity_mcnet_np,
                               metrics.vgg_cosine_similarity_np]
 
                 all_gen_images = []
@@ -493,7 +495,8 @@ def main():
                         metric = metric_fn(gen_images, target_result, keep_axis=(0, 1))
                         all_metric[s] = metric
 
-                results = {}
+                results = {'images': input_results['images'],
+                           'eval_images': target_result}
                 for metric_name, all_metric in zip(metric_names, all_metrics):
                     for subtask in args.eval_substasks:
                         results['eval_gen_images_%s/%s' % (metric_name, subtask)] = np.empty_like(all_gen_images[0])
