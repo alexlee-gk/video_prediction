@@ -1050,6 +1050,8 @@ def spectral_normed_weight(W, u=None, num_iters=1):
 def get_norm_layer(layer_type):
     if layer_type == 'batch':
         layer = tf.layers.batch_normalization
+    elif layer_type == 'layer':
+        layer = tf.contrib.layers.layer_norm
     elif layer_type == 'instance':
         from video_prediction.layers import fused_instance_norm
         layer = fused_instance_norm

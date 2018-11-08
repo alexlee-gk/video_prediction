@@ -22,7 +22,7 @@ arXiv preprint arXiv:1804.01523, 2018.
 git clone -b master --single-branch https://github.com/alexlee-gk/video_prediction.git
 cd video_prediction
 ```
-- Install TensorFlow >= 1.5 and dependencies from http://tensorflow.org/
+- Install TensorFlow >= 1.9 and dependencies from http://tensorflow.org/
 - Install ffmpeg (optional, used to generate GIFs for visualization, e.g. in TensorBoard)
 - Install other dependencies
 ```bash
@@ -68,7 +68,7 @@ bash data/download_and_preprocess_dataset.sh bair
 ```bash
 CUDA_VISIBLE_DEVICES=0 python scripts/train.py --input_dir data/bair --dataset bair \
   --model savp --model_hparams_dict hparams/bair_action_free/ours_savp/model_hparams.json \
-  --output_dir logs/bair_action_free/ours_svap
+  --output_dir logs/bair_action_free/ours_savp
 ```
 - To view training and validation information (e.g. loss plots, GIFs of predictions), run `tensorboard --logdir logs/bair_action_free --port 6006` and open http://localhost:6006.
 - For multi-GPU training, set `CUDA_VISIBLE_DEVICES` to a comma-separated list of devices, e.g. `CUDA_VISIBLE_DEVICES=0,1,2,3`. To use the CPU, set `CUDA_VISIBLE_DEVICES=""`.
