@@ -8,7 +8,6 @@ from tensorflow.contrib.training import HParams
 from tensorflow.python.util import nest
 
 import video_prediction as vp
-from video_prediction.functional_ops import foldl
 from video_prediction.ops import flatten
 from video_prediction.utils import tf_utils
 from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
@@ -194,8 +193,8 @@ class BaseVideoPredictionModel(object):
                 initializer['eval_%s/sum' % name] = tf.zeros(targets.shape[:2])
                 initializer['eval_%s/max' % name] = tf.fill(targets.shape[:2], float('-inf'))
 
-            eval_outputs_and_metrics = foldl(accum_gen_images_and_metrics_fn, tf.zeros([num_samples, 0]),
-                                             initializer=initializer, back_prop=False, parallel_iterations=parallel_iterations)
+            eval_outputs_and_metrics = tf.foldl(accum_gen_images_and_metrics_fn, tf.zeros([num_samples, 0]),
+                                                initializer=initializer, back_prop=False, parallel_iterations=parallel_iterations)
 
             for name, _ in metric_fns:
                 eval_outputs['eval_gen_images_%s/min' % name] = eval_outputs_and_metrics['eval_gen_images_%s/min' % name]
