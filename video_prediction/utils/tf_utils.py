@@ -1,6 +1,5 @@
 import itertools
 import os
-import tempfile
 import threading
 from collections import OrderedDict
 
@@ -14,6 +13,7 @@ from tensorflow.python.training import device_setter
 from tensorflow.python.util import nest
 
 from video_prediction.utils import ffmpeg_gif
+from video_prediction.utils import gif_summary
 
 IMAGE_SUMMARIES = "image_summaries"
 EVAL_SUMMARIES = "eval_summaries"
@@ -161,15 +161,15 @@ def tensor_to_image_batch(tensor):
 def _as_name_scope_map(values):
     name_scope_to_values = {}
     for name, value in values.items():
-        name_scope = "%s_summary" % name.split('/')[0]
+        name_scope = name.split('/')[0]
         name_scope_to_values.setdefault(name_scope, {})
         name_scope_to_values[name_scope][name] = value
     return name_scope_to_values
 
 
-def add_image_summaries(outputs, max_outputs=16, collections=None):
+def add_image_summaries(outputs, max_outputs=8, collections=None):
     if collections is None:
-        collections = [IMAGE_SUMMARIES]
+        collections = [tf.GraphKeys.SUMMARIES, IMAGE_SUMMARIES]
     for name_scope, outputs in _as_name_scope_map(outputs).items():
         with tf.name_scope(name_scope):
             for name, output in outputs.items():
@@ -178,15 +178,15 @@ def add_image_summaries(outputs, max_outputs=16, collections=None):
                 tf.summary.image(name, tensor_to_image_batch(output), collections=collections)
 
 
-def add_tensor_summaries(outputs, max_outputs=16, collections=None):
+def add_gif_summaries(outputs, max_outputs=8, collections=None):
     if collections is None:
-        collections = [IMAGE_SUMMARIES]
+        collections = [tf.GraphKeys.SUMMARIES, IMAGE_SUMMARIES]
     for name_scope, outputs in _as_name_scope_map(outputs).items():
         with tf.name_scope(name_scope):
             for name, output in outputs.items():
                 if max_outputs:
                     output = output[:max_outputs]
-                tf.summary.tensor_summary(name, tensor_to_clip(output), collections=collections)
+                gif_summary.gif_summary(name, tensor_to_clip(output)[None], fps=4, collections=collections)
 
 
 def add_scalar_summaries(losses_or_metrics, collections=None):
@@ -201,17 +201,17 @@ def add_scalar_summaries(losses_or_metrics, collections=None):
 def add_summaries(outputs, collections=None):
     scalar_outputs = OrderedDict()
     image_outputs = OrderedDict()
-    tensor_outputs = OrderedDict()
+    gif_outputs = OrderedDict()
     for name, output in outputs.items():
         if output.shape.ndims == 0:
             scalar_outputs[name] = output
         elif output.shape.ndims == 4:
             image_outputs[name] = output
-        else:
-            tensor_outputs[name] = output
+        elif output.shape.ndims > 4 and output.shape[4].value in (1, 3):
+            gif_outputs[name] = output
     add_scalar_summaries(scalar_outputs, collections=collections)
     add_image_summaries(image_outputs, collections=collections)
-    add_tensor_summaries(tensor_outputs, collections=collections)
+    add_gif_summaries(gif_outputs, collections=collections)
 
 
 def plot_buf(y):
@@ -291,6 +291,14 @@ def add_plot_summaries(metrics, x_offset=0, collections=None):
     for name_scope, metrics in _as_name_scope_map(metrics).items():
         with tf.name_scope(name_scope):
             for name, metric in metrics.items():
+                plot_summary(name, x_offset + tf.range(tf.shape(metric)[0]), metric, collections=collections)
+
+
+def add_plot_and_scalar_summaries(metrics, x_offset=0, collections=None):
+    for name_scope, metrics in _as_name_scope_map(metrics).items():
+        with tf.name_scope(name_scope):
+            for name, metric in metrics.items():
+                tf.summary.scalar(name, tf.reduce_mean(metric), collections=collections)
                 plot_summary(name, x_offset + tf.range(tf.shape(metric)[0]), metric, collections=collections)
 
 
