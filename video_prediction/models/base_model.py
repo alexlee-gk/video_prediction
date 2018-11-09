@@ -115,16 +115,12 @@ class BaseVideoPredictionModel(object):
         target_images = targets
         gen_images = outputs['gen_images']
         metric_fns = [
-            ('psnr', vp.metrics.peak_signal_to_noise_ratio),
-            ('mse', vp.metrics.mean_squared_error),
-            ('ssim', vp.metrics.structural_similarity),
-            ('ssim_scikit', vp.metrics.structural_similarity_scikit),
-            ('ssim_finn', vp.metrics.structural_similarity_finn),
-            ('vgg_csim', vp.metrics.vgg_cosine_similarity),
-            ('vgg_cdist', vp.metrics.vgg_cosine_distance),
+            ('psnr', vp.metrics.psnr),
+            ('mse', vp.metrics.mse),
+            ('ssim', vp.metrics.ssim),
         ]
         for metric_name, metric_fn in metric_fns:
-            metrics[metric_name] = metric_fn(target_images, gen_images)
+            metrics[metric_name] = tf.reduce_mean(metric_fn(target_images, gen_images))
         return metrics
 
     def eval_outputs_and_metrics_fn(self, inputs, outputs, targets, num_samples=None, parallel_iterations=None):
@@ -133,20 +129,16 @@ class BaseVideoPredictionModel(object):
         eval_outputs = OrderedDict()
         eval_metrics = OrderedDict()
         metric_fns = [
-            ('psnr', vp.metrics.peak_signal_to_noise_ratio),
-            ('mse', vp.metrics.mean_squared_error),
-            ('ssim', vp.metrics.structural_similarity),
-            ('ssim_scikit', vp.metrics.structural_similarity_scikit),
-            ('ssim_finn', vp.metrics.structural_similarity_finn),
-            ('vgg_csim', vp.metrics.vgg_cosine_similarity),
-            ('vgg_cdist', vp.metrics.vgg_cosine_distance),
+            ('psnr', vp.metrics.psnr),
+            ('mse', vp.metrics.mse),
+            ('ssim', vp.metrics.ssim),
         ]
         eval_outputs['eval_images'] = targets
         if self.deterministic:
             target_images = targets
             gen_images = outputs['gen_images']
             for metric_name, metric_fn in metric_fns:
-                metric = metric_fn(target_images, gen_images, keep_axis=(0, 1))
+                metric = metric_fn(target_images, gen_images)
                 eval_metrics['eval_%s/min' % metric_name] = metric
                 eval_metrics['eval_%s/avg' % metric_name] = metric
                 eval_metrics['eval_%s/max' % metric_name] = metric
@@ -155,26 +147,14 @@ class BaseVideoPredictionModel(object):
             def where_axis1(cond, x, y):
                 return transpose_batch_time(tf.where(cond, transpose_batch_time(x), transpose_batch_time(y)))
 
-            with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
-                _, target_vgg_features = vp.metrics._with_flat_batch(vgg_network.vgg16)(targets)
-
             def sort_criterion(x):
                 return tf.reduce_mean(x, axis=0)
 
             def accum_gen_images_and_metrics_fn(a, unused):
                 with tf.variable_scope(self.generator_scope, reuse=True):
                     gen_images, _ = self.generator_fn(inputs)
-                with tf.variable_scope('vgg', reuse=tf.AUTO_REUSE):
-                    _, gen_vgg_features = vp.metrics._with_flat_batch(vgg_network.vgg16)(gen_images)
                 for name, metric_fn in metric_fns:
-                    if name in ('vgg_csim', 'vgg_cdist'):
-                        metric_fn = {'vgg_csim': vp.metrics.cosine_similarity, 'vgg_cdist': vp.metrics.cosine_distance}[name]
-                        metric = 0.0
-                        for feature0, feature1 in zip(target_vgg_features, gen_vgg_features):
-                            metric += metric_fn(feature0, feature1, keep_axis=(0, 1))
-                        metric /= len(target_vgg_features)
-                    else:
-                        metric = metric_fn(targets, gen_images, keep_axis=(0, 1))  # time, batch_size
+                    metric = metric_fn(targets, gen_images)  # time, batch_size
                     cond_min = tf.less(sort_criterion(metric), sort_criterion(a['eval_%s/min' % name]))
                     cond_max = tf.greater(sort_criterion(metric), sort_criterion(a['eval_%s/max' % name]))
                     a['eval_%s/min' % name] = where_axis1(cond_min, metric, a['eval_%s/min' % name])
@@ -648,6 +628,8 @@ class VideoPredictionModel(BaseVideoPredictionModel):
         add_tensor_summaries(self.eval_outputs, collections=[tf_utils.EVAL_SUMMARIES, tf_utils.IMAGE_SUMMARIES])
         add_plot_summaries({name: tf.reduce_mean(metric, axis=0) for name, metric in self.eval_metrics.items()},
                            x_offset=self.hparams.context_frames + 1, collections=[tf_utils.EVAL_SUMMARIES])
+        add_scalar_summaries({name: tf.reduce_mean(metric) for name, metric in self.eval_metrics.items()},
+                             collections=[tf_utils.EVAL_SUMMARIES])
 
     def generator_loss_fn(self, inputs, outputs, targets):
         hparams = self.hparams
