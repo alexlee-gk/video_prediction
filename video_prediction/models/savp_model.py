@@ -379,6 +379,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         norm_layer = ops.get_norm_layer(self.hparams.norm_layer)
         downsample_layer = ops.get_downsample_layer(self.hparams.downsample_layer)
         upsample_layer = ops.get_upsample_layer(self.hparams.upsample_layer)
+        activation_layer = ops.get_activation_layer(self.hparams.activation_layer)
         image_shape = inputs['images'].get_shape().as_list()
         batch_size, height, width, color_channels = image_shape
         conv_rnn_states = states['conv_rnn_states']
@@ -445,7 +446,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                     h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
                 h = downsample_layer(h, out_channels, kernel_size=kernel_size, strides=(2, 2))
                 h = norm_layer(h)
-                h = tf.nn.relu(h)
+                h = activation_layer(h)
             if use_conv_rnn:
                 with tf.variable_scope('%s_h%d' % ('conv' if self.hparams.ablation_rnn else self.hparams.conv_rnn, i)):
                     if self.hparams.where_add == 'all':
@@ -455,7 +456,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                     if self.hparams.ablation_rnn:
                         conv_rnn_h = conv2d(conv_rnn_h, out_channels, kernel_size=(5, 5))
                         conv_rnn_h = norm_layer(conv_rnn_h)
-                        conv_rnn_h = tf.nn.relu(conv_rnn_h)
+                        conv_rnn_h = activation_layer(conv_rnn_h)
                     else:
                         conv_rnn_state = conv_rnn_states[len(new_conv_rnn_states)]
                         conv_rnn_h, conv_rnn_state = self._conv_rnn_func(conv_rnn_h, conv_rnn_state, out_channels)
@@ -473,7 +474,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                     h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
                 h = upsample_layer(h, out_channels, kernel_size=(3, 3), strides=(2, 2))
                 h = norm_layer(h)
-                h = tf.nn.relu(h)
+                h = activation_layer(h)
             if use_conv_rnn:
                 with tf.variable_scope('%s_h%d' % ('conv' if self.hparams.ablation_rnn else self.hparams.conv_rnn, len(layers))):
                     if self.hparams.where_add == 'all':
@@ -483,7 +484,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                     if self.hparams.ablation_rnn:
                         conv_rnn_h = conv2d(conv_rnn_h, out_channels, kernel_size=(5, 5))
                         conv_rnn_h = norm_layer(conv_rnn_h)
-                        conv_rnn_h = tf.nn.relu(conv_rnn_h)
+                        conv_rnn_h = activation_layer(conv_rnn_h)
                     else:
                         conv_rnn_state = conv_rnn_states[len(new_conv_rnn_states)]
                         conv_rnn_h, conv_rnn_state = self._conv_rnn_func(conv_rnn_h, conv_rnn_state, out_channels)
@@ -496,7 +497,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                 with tf.variable_scope('h%d_flow' % len(layers)):
                     h_flow = conv2d(layers[-1][-1], self.hparams.ngf, kernel_size=(3, 3), strides=(1, 1))
                     h_flow = norm_layer(h_flow)
-                    h_flow = tf.nn.relu(h_flow)
+                    h_flow = activation_layer(h_flow)
 
                 with tf.variable_scope('flows'):
                     flows = conv2d(h_flow, 2 * self.hparams.last_frames * self.hparams.num_transformed_images, kernel_size=(3, 3), strides=(1, 1))
@@ -508,7 +509,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                     with tf.variable_scope('h%d_dna_kernel' % len(layers)):
                         h_dna_kernel = conv2d(layers[-1][-1], self.hparams.ngf, kernel_size=(3, 3), strides=(1, 1))
                         h_dna_kernel = norm_layer(h_dna_kernel)
-                        h_dna_kernel = tf.nn.relu(h_dna_kernel)
+                        h_dna_kernel = activation_layer(h_dna_kernel)
 
                     # Using largest hidden state for predicting untied conv kernels.
                     with tf.variable_scope('dna_kernels'):
@@ -535,7 +536,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             with tf.variable_scope('h%d_scratch' % len(layers)):
                 h_scratch = conv2d(layers[-1][-1], self.hparams.ngf, kernel_size=(3, 3), strides=(1, 1))
                 h_scratch = norm_layer(h_scratch)
-                h_scratch = tf.nn.relu(h_scratch)
+                h_scratch = activation_layer(h_scratch)
 
             # Using largest hidden state for predicting a new image layer.
             # This allows the network to also generate one image from scratch,
@@ -582,7 +583,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                 with tf.variable_scope('h%d_masks' % len(layers)):
                     h_masks = conv2d(layers[-1][-1], self.hparams.ngf, kernel_size=(3, 3), strides=(1, 1))
                     h_masks = norm_layer(h_masks)
-                    h_masks = tf.nn.relu(h_masks)
+                    h_masks = activation_layer(h_masks)
 
                 with tf.variable_scope('masks'):
                     if self.hparams.dependent_mask:
@@ -708,6 +709,7 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
             downsample_layer='conv_pool2d',
             upsample_layer='upsample_conv2d',
             transformation='cdna',
+            activation_layer='relu',  # for generator only
             kernel_size=(5, 5),
             dilation_rate=(1, 1),
             where_add='all',

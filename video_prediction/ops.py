@@ -1047,6 +1047,16 @@ def spectral_normed_weight(W, u=None, num_iters=1):
     return W_bar
 
 
+def get_activation_layer(layer_type):
+    if layer_type == 'relu':
+        layer = tf.nn.relu
+    elif layer_type == 'elu':
+        layer = tf.nn.elu
+    else:
+        raise ValueError('Invalid activation layer %s' % layer_type)
+    return layer
+
+
 def get_norm_layer(layer_type):
     if layer_type == 'batch':
         layer = tf.layers.batch_normalization
