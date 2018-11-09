@@ -7,6 +7,18 @@ from video_prediction.models import vgg_network
 from video_prediction.utils.tf_utils import PersistentOpEvaluator
 
 
+def mse(a, b):
+    return tf.reduce_mean(tf.squared_difference(a, b), [-3, -2, -1])
+
+
+def psnr(a, b):
+    return tf.image.psnr(a, b, 1.0)
+
+
+def ssim(a, b):
+    return tf.image.ssim(a, b, 1.0)
+
+
 def _axis(keep_axis, ndims):
     if keep_axis is None:
         axis = None
