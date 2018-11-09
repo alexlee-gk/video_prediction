@@ -115,6 +115,45 @@ def transpose_batch_time(x):
         return x
 
 
+def dimension(inputs, axis=0):
+    shapes = [input_.shape for input_ in nest.flatten(inputs)]
+    s = tf.TensorShape([None])
+    for shape in shapes:
+        s = s.merge_with(shape[axis:axis + 1])
+    dim = s[0].value
+    return dim
+
+
+def unroll_rnn(cell, inputs, scope=None):
+    """Chooses between dynamic_rnn and static_rnn if the leading time dimension is dynamic or not."""
+    dim = dimension(inputs, axis=0)
+    if dim is None:
+        return tf.nn.dynamic_rnn(cell, inputs, dtype=tf.float32,
+                                 swap_memory=False, time_major=True, scope=scope)
+    else:
+        return static_rnn(cell, inputs, scope=scope)
+
+
+def static_rnn(cell, inputs, scope=None):
+    """Simple version of static_rnn."""
+    with tf.variable_scope(scope or "rnn") as varscope:
+        batch_size = dimension(inputs, axis=1)
+        state = cell.zero_state(batch_size, tf.float32)
+        flat_inputs = nest.flatten(inputs)
+        flat_inputs = list(zip(*[tf.unstack(flat_input, axis=0) for flat_input in flat_inputs]))
+        flat_outputs = []
+        for time, flat_input in enumerate(flat_inputs):
+            if time > 0:
+                varscope.reuse_variables()
+            input_ = nest.pack_sequence_as(inputs, flat_input)
+            output, state = cell(input_, state)
+            flat_output = nest.flatten(output)
+            flat_outputs.append(flat_output)
+        flat_outputs = [tf.stack(flat_output, axis=0) for flat_output in zip(*flat_outputs)]
+        outputs = nest.pack_sequence_as(output, flat_outputs)
+        return outputs, state
+
+
 def maybe_pad_or_slice(tensor, desired_length):
     length = tensor.shape.as_list()[0]
     if length < desired_length:

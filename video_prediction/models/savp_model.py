@@ -118,7 +118,7 @@ def create_encoder(inputs, e_net='legacy', use_e_rnn=False, rnn='lstm', **kwargs
         for i in range(2):
             with tf.variable_scope('%s_h%d' % (rnn, i)):
                 rnn_cell = RNNCell(kwargs['nef'] * 4)
-                h, _ = tf.nn.dynamic_rnn(rnn_cell, h, dtype=tf.float32, time_major=True)
+                h, _ = tf_utils.unroll_rnn(rnn_cell, h)
         h = flatten(h, 0, len(batch_shape) - 1)
 
         with tf.variable_scope('z_mu'):
@@ -659,8 +659,8 @@ def generator_fn(inputs, outputs_enc=None, hparams=None):
         if outputs_enc is not None:
             raise ValueError('outputs_enc has to be None when nz is 0.')
     cell = DNACell(inputs, hparams)
-    outputs, _ = tf.nn.dynamic_rnn(cell, inputs, dtype=tf.float32,
-                                   swap_memory=False, time_major=True)
+
+    outputs, _ = tf_utils.unroll_rnn(cell, inputs)
     if hparams.nz:
         inputs_samples = {name: flatten(tf.tile(input[:, None], [1, hparams.num_samples] + [1] * (input.shape.ndims - 1)), 1, 2)
                           for name, input in inputs.items() if name != 'zs'}
