@@ -170,19 +170,6 @@ def main():
         parameter_count = tf.reduce_sum([tf.reduce_prod(tf.shape(v)) for v in tf.trainable_variables()])
 
     saver = tf.train.Saver(max_to_keep=3)
-    summaries = tf.get_collection(tf.GraphKeys.SUMMARIES)
-    image_summaries = set(tf.get_collection(tf_utils.IMAGE_SUMMARIES))
-    eval_summaries = set(tf.get_collection(tf_utils.EVAL_SUMMARIES))
-    eval_image_summaries = image_summaries & eval_summaries
-    image_summaries -= eval_image_summaries
-    eval_summaries -= eval_image_summaries
-    if args.summary_freq:
-        summary_op = tf.summary.merge(summaries)
-    if args.image_summary_freq:
-        image_summary_op = tf.summary.merge(list(image_summaries))
-    if args.eval_summary_freq:
-        eval_summary_op = tf.summary.merge(list(eval_summaries))
-        eval_image_summary_op = tf.summary.merge(list(eval_image_summaries))
 
     if args.summary_freq or args.image_summary_freq or args.eval_summary_freq:
         summary_writer = tf.summary.FileWriter(args.output_dir)
@@ -208,6 +195,7 @@ def main():
                 return freq and ((step + 1) % freq == 0 or (step + 1) in (0, max_steps - start_step))
 
             fetches = {"global_step": global_step}
+            val_fetches = {}
             if step >= 0:
                 fetches["train_op"] = train_model.train_op
 
@@ -219,15 +207,19 @@ def main():
             if should(args.metrics_freq):
                 fetches['metrics'] = train_model.metrics
             if should(args.summary_freq):
-                fetches["summary"] = summary_op
+                fetches["summary"] = train_model.summary_op
+                val_fetches["summary"] = val_model.summary_op
             if should(args.image_summary_freq):
-                fetches["image_summary"] = image_summary_op
+                fetches["image_summary"] = train_model.image_summary_op
+                val_fetches["image_summary"] = val_model.image_summary_op
             if should(args.eval_summary_freq):
-                fetches["eval_summary"] = eval_summary_op
-                fetches["eval_image_summary"] = eval_image_summary_op
+                fetches["eval_summary"] = train_model.eval_summary_op
+                val_fetches["eval_summary"] = val_model.eval_summary_op
 
             run_start_time = time.time()
             results = sess.run(fetches)
+            if val_fetches:
+                val_results = sess.run(val_fetches)
             run_elapsed_time = time.time() - run_start_time
             if run_elapsed_time > 1.5:
                 print('session.run took %0.1fs' % run_elapsed_time)
@@ -235,17 +227,20 @@ def main():
             if should(args.summary_freq):
                 print("recording summary")
                 summary_writer.add_summary(results["summary"], results["global_step"])
+                if val_fetches:
+                    summary_writer.add_summary(val_results["summary"], results["global_step"])
                 print("done")
             if should(args.image_summary_freq):
                 print("recording image summary")
-                summary_writer.add_summary(
-                    tf_utils.convert_tensor_to_gif_summary(results["image_summary"]), results["global_step"])
+                summary_writer.add_summary(results["image_summary"], results["global_step"])
+                if val_fetches:
+                    summary_writer.add_summary(val_results["image_summary"], results["global_step"])
                 print("done")
             if should(args.eval_summary_freq):
                 print("recording eval summary")
                 summary_writer.add_summary(results["eval_summary"], results["global_step"])
-                summary_writer.add_summary(
-                    tf_utils.convert_tensor_to_gif_summary(results["eval_image_summary"]), results["global_step"])
+                if val_fetches:
+                    summary_writer.add_summary(val_results["eval_summary"], results["global_step"])
                 print("done")
             if should(args.summary_freq) or should(args.image_summary_freq) or should(args.eval_summary_freq):
                 summary_writer.flush()

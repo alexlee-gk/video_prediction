@@ -11,8 +11,8 @@ import video_prediction as vp
 from video_prediction.ops import flatten
 from video_prediction.utils import tf_utils
 from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
-    replace_read_ops, print_loss_info, transpose_batch_time, add_tensor_summaries, add_scalar_summaries, \
-    add_plot_summaries, add_summaries
+    replace_read_ops, print_loss_info, transpose_batch_time, add_gif_summaries, add_scalar_summaries, \
+    add_plot_and_scalar_summaries, add_summaries
 from . import vgg_network
 
 
@@ -292,6 +292,9 @@ class VideoPredictionModel(BaseVideoPredictionModel):
         self.g_vars = None
         self.d_vars = None
         self.train_op = None
+        self.summary_op = None
+        self.image_summary_op = None
+        self.eval_summary_op = None
 
     def get_default_hparams_dict(self):
         """
@@ -612,23 +615,26 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                 self.d_loss = reduce_tensors(tower_d_loss)
                 self.g_loss = reduce_tensors(tower_g_loss)
 
-        add_summaries({name: tensor for name, tensor in self.inputs.items()
-                       if tensor.shape.ndims == 4 or (tensor.shape.ndims > 4 and
-                                                      tensor.shape[4].value in (1, 3))})
+        original_summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
+        add_summaries(self.inputs)
         if self.targets is not None:
             add_summaries({'targets': self.targets})
-        add_summaries({name: tensor for name, tensor in self.outputs.items()
-                       if tensor.shape.ndims == 4 or (tensor.shape.ndims > 4 and
-                                                      tensor.shape[4].value in (1, 3))})
-        add_scalar_summaries({name: tensor for name, tensor in self.outputs.items() if tensor.shape.ndims == 0})
+        add_summaries(self.outputs)
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
         add_scalar_summaries(self.metrics)
-        add_tensor_summaries(self.eval_outputs, collections=[tf_utils.EVAL_SUMMARIES, tf_utils.IMAGE_SUMMARIES])
-        add_plot_summaries({name: tf.reduce_mean(metric, axis=0) for name, metric in self.eval_metrics.items()},
-                           x_offset=self.hparams.context_frames + 1, collections=[tf_utils.EVAL_SUMMARIES])
-        add_scalar_summaries({name: tf.reduce_mean(metric) for name, metric in self.eval_metrics.items()},
-                             collections=[tf_utils.EVAL_SUMMARIES])
+        summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES)) - original_summaries
+        # split summaries into non-image summaries and image summaries
+        self.summary_op = tf.summary.merge(list(summaries - set(tf.get_collection(tf_utils.IMAGE_SUMMARIES))))
+        self.image_summary_op = tf.summary.merge(list(summaries & set(tf.get_collection(tf_utils.IMAGE_SUMMARIES))))
+
+        original_summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
+        add_gif_summaries(self.eval_outputs)
+        add_plot_and_scalar_summaries(
+            {name: tf.reduce_mean(metric, axis=0) for name, metric in self.eval_metrics.items()},
+            x_offset=self.hparams.context_frames + 1)
+        summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES)) - original_summaries
+        self.eval_summary_op = tf.summary.merge(list(summaries))
 
     def generator_loss_fn(self, inputs, outputs, targets):
         hparams = self.hparams
