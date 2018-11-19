@@ -210,10 +210,10 @@ def main():
                 fetches["summary"] = train_model.summary_op
                 val_fetches["summary"] = val_model.summary_op
             if should(args.image_summary_freq):
-                fetches["image_summary"] = train_model.image_summary_op
+                # fetches["image_summary"] = train_model.image_summary_op
                 val_fetches["image_summary"] = val_model.image_summary_op
             if should(args.eval_summary_freq):
-                fetches["eval_summary"] = train_model.eval_summary_op
+                # fetches["eval_summary"] = train_model.eval_summary_op
                 val_fetches["eval_summary"] = val_model.eval_summary_op
 
             run_start_time = time.time()
@@ -232,13 +232,13 @@ def main():
                 print("done")
             if should(args.image_summary_freq):
                 print("recording image summary")
-                summary_writer.add_summary(results["image_summary"], results["global_step"])
+                # summary_writer.add_summary(results["image_summary"], results["global_step"])
                 if val_fetches:
                     summary_writer.add_summary(val_results["image_summary"], results["global_step"])
                 print("done")
             if should(args.eval_summary_freq):
                 print("recording eval summary")
-                summary_writer.add_summary(results["eval_summary"], results["global_step"])
+                # summary_writer.add_summary(results["eval_summary"], results["global_step"])
                 if val_fetches:
                     summary_writer.add_summary(val_results["eval_summary"], results["global_step"])
                 print("done")
