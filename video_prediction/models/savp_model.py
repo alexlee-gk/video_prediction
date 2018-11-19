@@ -247,6 +247,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         num_masks = self.hparams.last_frames * self.hparams.num_transformed_images + \
             int(bool(self.hparams.prev_image_background)) + \
             int(bool(self.hparams.first_image_background and not self.hparams.context_images_background)) + \
+            int(bool(self.hparams.last_image_background and not self.hparams.context_images_background)) + \
             (self.hparams.context_frames if self.hparams.context_images_background else 0) + \
             int(bool(self.hparams.generate_scratch_image))
         output_size = {
@@ -555,6 +556,8 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                 transformed_images.append(image)
             if self.hparams.first_image_background and not self.hparams.context_images_background:
                 transformed_images.append(self.inputs['images'][0])
+            if self.hparams.last_image_background and not self.hparams.context_images_background:
+                transformed_images.append(self.inputs['images'][self.hparams.context_frames - 1])
             if self.hparams.context_images_background:
                 transformed_images.extend(tf.unstack(self.inputs['images'][:self.hparams.context_frames]))
             if self.hparams.generate_scratch_image:
@@ -572,6 +575,8 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                     transformed_pix_distribs.append(pix_distrib)
                 if self.hparams.first_image_background and not self.hparams.context_images_background:
                     transformed_pix_distribs.append(self.inputs['pix_distribs'][0])
+                if self.hparams.last_image_background and not self.hparams.context_images_background:
+                    transformed_pix_distribs.append(self.inputs['pix_distribs'][self.hparams.context_frames - 1])
                 if self.hparams.context_images_background:
                     transformed_pix_distribs.extend(tf.unstack(self.inputs['pix_distribs'][:self.hparams.context_frames]))
                 if self.hparams.generate_scratch_image:
@@ -717,6 +722,7 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
             last_frames=1,
             prev_image_background=True,
             first_image_background=True,
+            last_image_background=False,
             context_images_background=False,
             generate_scratch_image=True,
             dependent_mask=True,
