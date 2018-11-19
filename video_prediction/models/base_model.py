@@ -3,6 +3,7 @@ import itertools
 import os
 from collections import OrderedDict
 
+import numpy as np
 import tensorflow as tf
 from tensorflow.contrib.training import HParams
 from tensorflow.python.util import nest
@@ -251,11 +252,20 @@ class VideoPredictionModel(BaseVideoPredictionModel):
         self.discriminator_scope = discriminator_scope
         self.discriminator_encoder_scope = discriminator_encoder_scope
 
-        if any(self.hparams.decay_steps):
+        if any(self.hparams.lr_boundaries):
+            global_step = tf.train.get_or_create_global_step()
+            lr_values = list(self.hparams.lr * 0.1 ** np.arange(len(self.hparams.lr_boundaries) + 1))
+            self.learning_rate = tf.train.piecewise_constant(global_step, self.hparams.lr_boundaries, lr_values)
+        elif any(self.hparams.decay_steps):
             lr, end_lr = self.hparams.lr, self.hparams.end_lr
             start_step, end_step = self.hparams.decay_steps
-            step = tf.clip_by_value(tf.train.get_or_create_global_step(), start_step, end_step)
-            self.learning_rate = lr + (end_lr - lr) * tf.to_float(step - start_step) / tf.to_float(end_step - start_step)
+            if start_step == end_step:
+                schedule = tf.cond(tf.less(tf.train.get_or_create_global_step(), start_step),
+                                   lambda: 0.0, lambda: 1.0)
+            else:
+                step = tf.clip_by_value(tf.train.get_or_create_global_step(), start_step, end_step)
+                schedule = tf.to_float(step - start_step) / tf.to_float(end_step - start_step)
+            self.learning_rate = lr + (end_lr - lr) * schedule
         else:
             self.learning_rate = self.hparams.lr
         if mode == 'train':
@@ -328,6 +338,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             lr=0.001,
             end_lr=0.0,
             decay_steps=(200000, 300000),
+            lr_boundaries=(0,),
             max_steps=300000,
             beta1=0.9,
             beta2=0.999,
