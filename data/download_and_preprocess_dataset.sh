@@ -30,8 +30,25 @@ elif [ $1 = "kth" ]; then
     wget ${URL} -O ${TARGET_DIR}/raw/${ZIP_FNAME}
     unzip ${TARGET_DIR}/raw/${ZIP_FNAME} -d ${TARGET_DIR}/raw/${ACTION}
   done
-  python video_prediction/datasets/kth_dataset.py ${TARGET_DIR}/raw ${TARGET_DIR}
+  FRAME_RATE=25
+  IMAGE_SIZE=64
+  mkdir -p ${TARGET_DIR}/processed
+  echo "Processing '$1' dataset"
+  for ACTION in walking jogging running boxing handwaving handclapping; do
+    for VIDEO_FNAME in ${TARGET_DIR}/raw/${ACTION}/*.avi; do
+      FNAME=$(basename ${VIDEO_FNAME})
+      FNAME=${FNAME%_uncomp.avi}
+      # sometimes the directory is not created, so try until it is
+      while [ ! -d "${TARGET_DIR}/processed/${ACTION}/${FNAME}" ]; do
+        mkdir -p ${TARGET_DIR}/processed/${ACTION}/${FNAME}
+      done
+      ffmpeg -i ${VIDEO_FNAME} -r ${FRAME_RATE} -f image2 -s ${IMAGE_SIZE}x${IMAGE_SIZE} \
+      ${TARGET_DIR}/processed/${ACTION}/${FNAME}/image-%03d_${IMAGE_SIZE}x${IMAGE_SIZE}.png
+    done
+  done
+  python video_prediction/datasets/kth_dataset.py ${TARGET_DIR}/processed ${TARGET_DIR}
   rm -rf ${TARGET_DIR}/raw
+  rm -rf ${TARGET_DIR}/processed
 else
   echo "Invalid dataset name: '$1' (choose from 'bair', 'kth')" >&2
   exit 1
