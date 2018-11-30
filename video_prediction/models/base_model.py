@@ -18,7 +18,8 @@ from . import vgg_network
 
 class BaseVideoPredictionModel(object):
     def __init__(self, mode='train', hparams_dict=None, hparams=None,
-                 num_gpus=None, eval_num_samples=100, eval_parallel_iterations=1):
+                 num_gpus=None, eval_num_samples=100,
+                 eval_num_samples_for_diversity=10, eval_parallel_iterations=1):
         """
         Base video prediction model.
 
@@ -44,6 +45,7 @@ class BaseVideoPredictionModel(object):
             raise ValueError('num_gpus=%d is greater than the number of visible devices %d' % (num_gpus, max_num_gpus))
         self.num_gpus = num_gpus
         self.eval_num_samples = eval_num_samples
+        self.eval_num_samples_for_diversity = eval_num_samples_for_diversity
         self.eval_parallel_iterations = eval_parallel_iterations
         self.hparams = self.parse_hparams(hparams_dict, hparams)
         if self.hparams.context_frames == -1:
@@ -64,6 +66,7 @@ class BaseVideoPredictionModel(object):
         self.metrics = None
         self.eval_outputs = None
         self.eval_metrics = None
+        self.accum_eval_metrics = None
 
     def get_default_hparams_dict(self):
         """
@@ -122,8 +125,10 @@ class BaseVideoPredictionModel(object):
             metrics[metric_name] = tf.reduce_mean(metric_fn(target_images, gen_images))
         return metrics
 
-    def eval_outputs_and_metrics_fn(self, inputs, outputs, targets, num_samples=None, parallel_iterations=None):
+    def eval_outputs_and_metrics_fn(self, inputs, outputs, targets, num_samples=None,
+                                    num_samples_for_diversity=None, parallel_iterations=None):
         num_samples = num_samples or self.eval_num_samples
+        num_samples_for_diversity = num_samples_for_diversity or self.eval_num_samples_for_diversity
         parallel_iterations = parallel_iterations or self.eval_parallel_iterations
         eval_outputs = OrderedDict()
         eval_metrics = OrderedDict()
@@ -162,6 +167,14 @@ class BaseVideoPredictionModel(object):
                     a['eval_gen_images_%s/min' % name] = where_axis1(cond_min, gen_images, a['eval_gen_images_%s/min' % name])
                     a['eval_gen_images_%s/sum' % name] = gen_images + a['eval_gen_images_%s/sum' % name]
                     a['eval_gen_images_%s/max' % name] = where_axis1(cond_max, gen_images, a['eval_gen_images_%s/max' % name])
+
+                a['eval_diversity'] = tf.cond(
+                    tf.logical_and(tf.less(0, a['eval_sample_ind']),
+                                   tf.less_equal(a['eval_sample_ind'], num_samples_for_diversity)),
+                    lambda: -vp.metrics.lpips(a['eval_gen_images_last'], gen_images) + a['eval_diversity'],
+                    lambda: a['eval_diversity'])
+                a['eval_sample_ind'] = 1 + a['eval_sample_ind']
+                a['eval_gen_images_last'] = gen_images
                 return a
 
             initializer = {}
@@ -172,6 +185,9 @@ class BaseVideoPredictionModel(object):
                 initializer['eval_%s/min' % name] = tf.fill(targets.shape[:2], float('inf'))
                 initializer['eval_%s/sum' % name] = tf.zeros(targets.shape[:2])
                 initializer['eval_%s/max' % name] = tf.fill(targets.shape[:2], float('-inf'))
+            initializer['eval_diversity'] = tf.zeros(targets.shape[:2])
+            initializer['eval_sample_ind'] = tf.zeros((), dtype=tf.int32)
+            initializer['eval_gen_images_last'] = tf.zeros_like(targets)
 
             eval_outputs_and_metrics = tf.foldl(accum_gen_images_and_metrics_fn, tf.zeros([num_samples, 0]),
                                                 initializer=initializer, back_prop=False, parallel_iterations=parallel_iterations)
@@ -183,6 +199,7 @@ class BaseVideoPredictionModel(object):
                 eval_metrics['eval_%s/min' % name] = eval_outputs_and_metrics['eval_%s/min' % name]
                 eval_metrics['eval_%s/avg' % name] = eval_outputs_and_metrics['eval_%s/sum' % name] / float(num_samples)
                 eval_metrics['eval_%s/max' % name] = eval_outputs_and_metrics['eval_%s/max' % name]
+            eval_metrics['eval_diversity'] = eval_outputs_and_metrics['eval_diversity'] / float(num_samples_for_diversity)
         return eval_outputs, eval_metrics
 
     def restore(self, sess, checkpoints):
@@ -295,6 +312,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
         self.summary_op = None
         self.image_summary_op = None
         self.eval_summary_op = None
+        self.accum_eval_summary_op = None
 
     def get_default_hparams_dict(self):
         """
@@ -615,6 +633,10 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                 self.d_loss = reduce_tensors(tower_d_loss)
                 self.g_loss = reduce_tensors(tower_g_loss)
 
+        self.accum_eval_metrics = OrderedDict()
+        for name, eval_metric in self.eval_metrics.items():
+            _, self.accum_eval_metrics['accum_' + name] = tf.metrics.mean_tensor(eval_metric)
+
         original_summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
         add_summaries(self.inputs)
         if self.targets is not None:
@@ -635,6 +657,13 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             x_offset=self.hparams.context_frames + 1)
         summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES)) - original_summaries
         self.eval_summary_op = tf.summary.merge(list(summaries))
+
+        original_summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
+        add_plot_and_scalar_summaries(
+            {name: tf.reduce_mean(metric, axis=0) for name, metric in self.accum_eval_metrics.items()},
+            x_offset=self.hparams.context_frames + 1)
+        summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES)) - original_summaries
+        self.accum_eval_summary_op = tf.summary.merge(list(summaries))
 
     def generator_loss_fn(self, inputs, outputs, targets):
         hparams = self.hparams

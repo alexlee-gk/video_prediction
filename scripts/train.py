@@ -46,6 +46,7 @@ def main():
     parser.add_argument("--metrics_freq", type=int, default=0, help="run and display metrics every metrics_freq step")
     parser.add_argument("--gif_freq", type=int, default=0, help="save gifs of predicted frames every gif_freq steps")
     parser.add_argument("--save_freq", type=int, default=5000, help="save model every save_freq steps, 0 to disable")
+    parser.add_argument("--accum_eval_summary_num_samples", type=int, default=256, help="the eval_accum_summary is run accum_eval_summary_num_samples // batch_size number of times")
 
     parser.add_argument("--gpu_mem_frac", type=float, default=0, help="fraction of gpu memory to use")
     parser.add_argument("--seed", type=int)
@@ -171,7 +172,7 @@ def main():
 
     saver = tf.train.Saver(max_to_keep=3)
 
-    if args.summary_freq or args.image_summary_freq or args.eval_summary_freq:
+    if args.summary_freq or args.image_summary_freq or args.eval_summary_freq or args.accum_eval_summary_num_samples:
         summary_writer = tf.summary.FileWriter(args.output_dir)
 
     gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=args.gpu_mem_frac)
@@ -182,6 +183,7 @@ def main():
         print("parameter_count =", sess.run(parameter_count))
 
         sess.run(tf.global_variables_initializer())
+        sess.run(tf.local_variables_initializer())
         train_model.restore(sess, args.checkpoint)
 
         start_step = sess.run(global_step)
@@ -283,6 +285,14 @@ def main():
                     print("saving gif to", os.path.join(image_dir, filename))
                     ffmpeg_gif.save_gif(os.path.join(image_dir, filename), clip, fps=4)
                     print("done")
+
+        if args.accum_eval_summary_num_samples:
+            accum_eval_summary_num_updates = args.accum_eval_summary_num_samples // batch_size
+            for update_step in range(accum_eval_summary_num_updates):
+                print('evaluating %d / %d' % (update_step + 1, accum_eval_summary_num_updates))
+                accum_eval_summary = sess.run(val_model.accum_eval_summary_op)
+            summary_writer.add_summary(accum_eval_summary, results["global_step"])
+            summary_writer.flush()
 
 
 if __name__ == '__main__':
