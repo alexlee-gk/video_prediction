@@ -2,10 +2,12 @@ import argparse
 import glob
 import itertools
 import os
+import pickle
 import random
+import re
 
-import cv2
 import numpy as np
+import skimage.io
 import tensorflow as tf
 
 from video_prediction.datasets.base_dataset import VarLenFeatureVideoDataset
@@ -31,7 +33,10 @@ class KTHVideoDataset(VarLenFeatureVideoDataset):
         return False
 
     def num_examples_per_epoch(self):
-        return len(self.filenames)
+        with open(os.path.join(self.input_dir, 'sequence_lengths.txt'), 'r') as sequence_lengths_file:
+            sequence_lengths = sequence_lengths_file.readlines()
+        sequence_lengths = [int(sequence_length.strip()) for sequence_length in sequence_lengths]
+        return np.sum(np.array(sequence_lengths) >= self.hparams.sequence_length)
 
 
 def _bytes_feature(value):
@@ -48,12 +53,16 @@ def _int64_feature(value):
 
 def partition_data(input_dir):
     # List files and corresponding person IDs
-    files = glob.glob(os.path.join(input_dir, '*/*.avi'))
-    persons = np.array([int(f.split('/person')[1].split('_')[0]) for f in files])
+    fnames = glob.glob(os.path.join(input_dir, '*/*'))
+    fnames = [fname for fname in fnames if os.path.isdir(fname)]
+
+    persons = [re.match('person(\d+)_\w+_\w+', os.path.split(fname)[1]).group(1) for fname in fnames]
+    persons = np.array([int(person) for person in persons])
+
     train_mask = persons <= 16
 
-    train_fnames = [files[i] for i in np.where(train_mask)[0]]
-    test_fnames = [files[i] for i in np.where(~train_mask)[0]]
+    train_fnames = [fnames[i] for i in np.where(train_mask)[0]]
+    test_fnames = [fnames[i] for i in np.where(~train_mask)[0]]
 
     random.shuffle(train_fnames)
 
@@ -62,24 +71,13 @@ def partition_data(input_dir):
     return train_fnames, val_fnames, test_fnames
 
 
-def read_video(fname):
-    if not os.path.isfile(fname):
-        raise FileNotFoundError
-    vidcap = cv2.VideoCapture(fname)
-    frames, (success, image) = [], vidcap.read()
-    while success:
-        frames.append(image)
-        success, image = vidcap.read()
-    return frames
-
-
-def save_tf_record(output_fname, sequences, preprocess_image):
+def save_tf_record(output_fname, sequences):
     print('saving sequences to %s' % output_fname)
     with tf.python_io.TFRecordWriter(output_fname) as writer:
         for sequence in sequences:
             num_frames = len(sequence)
             height, width, channels = sequence[0].shape
-            encoded_sequence = [preprocess_image(image) for image in sequence]
+            encoded_sequence = [image.tostring() for image in sequence]
             features = tf.train.Features(feature={
                 'sequence_length': _int64_feature(num_frames),
                 'height': _int64_feature(height),
@@ -91,21 +89,44 @@ def save_tf_record(output_fname, sequences, preprocess_image):
             writer.write(example.SerializeToString())
 
 
-def read_videos_and_save_tf_records(output_dir, fnames):
-    def preprocess_image(image):
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = cv2.resize(image[:, 20:-20], (64, 64), interpolation=cv2.INTER_LINEAR)
-        return image.tostring()
+def read_frames_and_save_tf_records(output_dir, video_dirs, sequences_per_file=128):
+    partition_name = os.path.split(output_dir)[1]
 
-    for i, fname in enumerate(fnames):
-        output_fname = os.path.join(output_dir, os.path.splitext(os.path.basename(fname))[0] + '.tfrecords')
-        sequence = read_video(fname)
-        save_tf_record(output_fname, [sequence], preprocess_image)
+    sequences = []
+    sequence_iter = 0
+    sequence_lengths_file = open(os.path.join(output_dir, 'sequence_lengths.txt'), 'w')
+    for video_iter, video_dir in enumerate(video_dirs):
+        meta_partition_name = partition_name if partition_name == 'test' else 'train'
+        meta_fname = os.path.join(os.path.split(video_dir)[0], '%s_meta%dx%d.pkl' % (meta_partition_name, 64, 64))
+        with open(meta_fname, "rb") as f:
+            data = pickle.load(f)
+
+        vid = os.path.split(video_dir)[1]
+        (d,) = [d for d in data if d['vid'] == vid]
+        for frame_fnames_iter, frame_fnames in enumerate(d['files']):
+            frame_fnames = [os.path.join(video_dir, frame_fname) for frame_fname in frame_fnames]
+            frames = skimage.io.imread_collection(frame_fnames)
+
+            if not sequences:
+                last_start_sequence_iter = sequence_iter
+                print("reading sequences starting at sequence %d" % sequence_iter)
+
+            sequences.append(frames)
+            sequence_iter += 1
+            sequence_lengths_file.write("%d\n" % len(frames))
+
+            if (len(sequences) == sequences_per_file or
+                    (video_iter == (len(video_dirs) - 1) and frame_fnames_iter == (len(d['files']) - 1))):
+                output_fname = 'sequence_{0}_to_{1}.tfrecords'.format(last_start_sequence_iter, sequence_iter - 1)
+                output_fname = os.path.join(output_dir, output_fname)
+                save_tf_record(output_fname, sequences)
+                sequences[:] = []
+    sequence_lengths_file.close()
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("input_dir", type=str, help="directory containing the directories "
+    parser.add_argument("input_dir", type=str, help="directory containing the processed directories "
                                                     "boxing, handclapping, handwaving, "
                                                     "jogging, running, walking")
     parser.add_argument("output_dir", type=str)
@@ -118,7 +139,7 @@ def main():
         partition_dir = os.path.join(args.output_dir, partition_name)
         if not os.path.exists(partition_dir):
             os.makedirs(partition_dir)
-        read_videos_and_save_tf_records(partition_dir, partition_fnames)
+        read_frames_and_save_tf_records(partition_dir, partition_fnames)
 
 
 if __name__ == '__main__':

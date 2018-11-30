@@ -108,6 +108,9 @@ class BaseVideoDataset(object):
     def set_sequence_length(self, sequence_length):
         self.hparams.sequence_length = sequence_length
 
+    def filter(self, serialized_example):
+        return tf.convert_to_tensor(True)
+
     def parser(self, serialized_example):
         """
         Parses a single tf.train.Example or tf.train.SequenceExample into
@@ -120,20 +123,15 @@ class BaseVideoDataset(object):
         if self.mode == 'train':
             random.shuffle(filenames)
 
-        dataset = tf.data.TFRecordDataset(filenames)
-        dataset = dataset.map(self.parser, num_parallel_calls=batch_size)
-        dataset.prefetch(2 * batch_size)
+        dataset = tf.data.TFRecordDataset(filenames, buffer_size=8 * 1024 * 1024)
+        dataset = dataset.filter(self.filter)
+        if self.mode == 'train':
+            dataset = dataset.apply(tf.contrib.data.shuffle_and_repeat(buffer_size=1024, count=self.num_epochs))
+        else:
+            dataset = dataset.repeat(self.num_epochs)
+        dataset = dataset.apply(tf.contrib.data.map_and_batch(self.parser, batch_size))
+        dataset = dataset.prefetch(batch_size)
 
-        # Could shuffle individual samples but it becomes too slow. Just shuffle filenames instead.
-        # if self.mode == 'train':
-        #     min_queue_examples = int(
-        #         self.num_examples_per_epoch() * 0.4)
-        #     # Ensure that the capacity is sufficiently large to provide good random
-        #     # shuffling.
-        #     dataset = dataset.shuffle(buffer_size=min_queue_examples + 3 * batch_size)
-
-        dataset = dataset.repeat(self.num_epochs)
-        dataset = dataset.batch(batch_size)
         iterator = dataset.make_one_shot_iterator()
         state_like_batches, action_like_batches = iterator.get_next()
 
@@ -393,6 +391,13 @@ class VarLenFeatureVideoDataset(BaseVideoDataset):
 
     https://github.com/tensorflow/tensorflow/issues/15977
     """
+    def filter(self, serialized_example):
+        features = dict()
+        features['sequence_length'] = tf.FixedLenFeature((), tf.int64)
+        features = tf.parse_single_example(serialized_example, features=features)
+        example_sequence_length = features['sequence_length']
+        return tf.greater_equal(example_sequence_length, self.hparams.sequence_length)
+
     def parser(self, serialized_example):
         """
         Parses a single tf.train.SequenceExample into images, states, actions, etc tensors.
