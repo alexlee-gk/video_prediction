@@ -33,6 +33,13 @@ elif [ $1 = "kth" ]; then
   FRAME_RATE=25
   IMAGE_SIZE=64
   mkdir -p ${TARGET_DIR}/processed
+  # download files with metadata specifying the subsequences
+  TAR_FNAME=kth_meta.tar.gz
+  URL=https://people.eecs.berkeley.edu/~alexlee_gk/projects/savp/data/${TAR_FNAME}
+  echo "Downloading '${TAR_FNAME}'"
+  wget ${URL} -O ${TARGET_DIR}/processed/${TAR_FNAME}
+  tar -xzvf ${TARGET_DIR}/processed/${TAR_FNAME} --strip 1 -C ${TARGET_DIR}/processed
+  # convert the videos into sequence of downscaled images
   echo "Processing '$1' dataset"
   for ACTION in walking jogging running boxing handwaving handclapping; do
     for VIDEO_FNAME in ${TARGET_DIR}/raw/${ACTION}/*.avi; do
