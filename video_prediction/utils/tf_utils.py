@@ -85,7 +85,7 @@ def replace_read_ops(loss_or_losses, var_list):
                 ge.connect(ge.sgv(var.read_value().op), consumer_sgv)
 
 
-def print_loss_info(losses, inputs, outputs, targets):
+def print_loss_info(losses, *tensors):
     def get_descendants(tensor, tensors):
         descendants = []
         for child in tensor.op.inputs:
@@ -95,7 +95,7 @@ def print_loss_info(losses, inputs, outputs, targets):
                 descendants.extend(get_descendants(child, tensors))
         return descendants
 
-    name_to_tensors = list(inputs.items()) + list(outputs.items()) + [('targets', targets)]
+    name_to_tensors = itertools.chain(*[tensor.items() for tensor in tensors])
     tensor_to_names = OrderedDict([(v, k) for k, v in name_to_tensors])
 
     print(tf.get_default_graph().get_name_scope())
@@ -124,10 +124,10 @@ def dimension(inputs, axis=0):
     return dim
 
 
-def unroll_rnn(cell, inputs, scope=None):
+def unroll_rnn(cell, inputs, scope=None, use_dynamic_rnn=True):
     """Chooses between dynamic_rnn and static_rnn if the leading time dimension is dynamic or not."""
     dim = dimension(inputs, axis=0)
-    if dim is None:
+    if use_dynamic_rnn or dim is None:
         return tf.nn.dynamic_rnn(cell, inputs, dtype=tf.float32,
                                  swap_memory=False, time_major=True, scope=scope)
     else:
@@ -401,6 +401,70 @@ def compute_averaged_gradients(opt, tower_loss, **kwargs):
     return gradvars
 
 
+# the next 3 function are from tensorpack:
+# https://github.com/tensorpack/tensorpack/blob/master/tensorpack/graph_builder/utils.py
+def split_grad_list(grad_list):
+    """
+    Args:
+        grad_list: K x N x 2
+
+    Returns:
+        K x N: gradients
+        K x N: variables
+    """
+    g = []
+    v = []
+    for tower in grad_list:
+        g.append([x[0] for x in tower])
+        v.append([x[1] for x in tower])
+    return g, v
+
+
+def merge_grad_list(all_grads, all_vars):
+    """
+    Args:
+        all_grads (K x N): gradients
+        all_vars(K x N): variables
+
+    Return:
+        K x N x 2: list of list of (grad, var) pairs
+    """
+    return [list(zip(gs, vs)) for gs, vs in zip(all_grads, all_vars)]
+
+
+def allreduce_grads(all_grads, average):
+    """
+    All-reduce average the gradients among K devices. Results are broadcasted to all devices.
+
+    Args:
+        all_grads (K x N): List of list of gradients. N is the number of variables.
+        average (bool): average gradients or not.
+
+    Returns:
+        K x N: same as input, but each grad is replaced by the average over K devices.
+    """
+    from tensorflow.contrib import nccl
+    nr_tower = len(all_grads)
+    if nr_tower == 1:
+        return all_grads
+    new_all_grads = []  # N x K
+    for grads in zip(*all_grads):
+        summed = nccl.all_sum(grads)
+
+        grads_for_devices = []  # K
+        for g in summed:
+            with tf.device(g.device):
+                # tensorflow/benchmarks didn't average gradients
+                if average:
+                    g = tf.multiply(g, 1.0 / nr_tower)
+            grads_for_devices.append(g)
+        new_all_grads.append(grads_for_devices)
+
+    # transpose to K x N
+    ret = list(zip(*new_all_grads))
+    return ret
+
+
 def _reduce_entries(*entries):
     num_gpus = len(entries)
     if entries[0] is None:
@@ -446,16 +510,16 @@ def reduce_tensors(structures, shallow=False):
     return reduced_structure
 
 
-def get_checkpoint_restore_saver(checkpoint, skip_global_step=False, restore_to_checkpoint_mapping=None,
-                                 restore_scope=None):
+def get_checkpoint_restore_saver(checkpoint, var_list=None, skip_global_step=False, restore_to_checkpoint_mapping=None):
     if os.path.isdir(checkpoint):
         # latest_checkpoint doesn't work when the path has special characters
         checkpoint = tf.train.latest_checkpoint(checkpoint)
     checkpoint_reader = tf.pywrap_tensorflow.NewCheckpointReader(checkpoint)
     checkpoint_var_names = checkpoint_reader.get_variable_to_shape_map().keys()
     restore_to_checkpoint_mapping = restore_to_checkpoint_mapping or (lambda name: name.split(':')[0])
-    restore_vars = {restore_to_checkpoint_mapping(var.name): var
-                    for var in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=restore_scope)}
+    if not var_list:
+        var_list = tf.global_variables()
+    restore_vars = {restore_to_checkpoint_mapping(var.name): var for var in var_list}
     if skip_global_step and 'global_step' in restore_vars:
         del restore_vars['global_step']
     # restore variables that are both in the global graph and in the checkpoint

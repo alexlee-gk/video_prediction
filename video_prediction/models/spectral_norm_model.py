@@ -1,4 +1,5 @@
 import tensorflow as tf
+from tensorflow.python.util import nest
 
 from video_prediction import ops
 from video_prediction.ops import dense, lrelu, flatten
@@ -79,6 +80,7 @@ def create_video_sn_discriminator(clips,
     with tf.variable_scope("video_sn_fc4"):
         logits = dense(tf.reshape(layers[-1], [batch_size, -1]), 1, use_spectral_norm=True)
         layers.append(logits)
+    layers = nest.map_structure(tf_utils.transpose_batch_time, layers)
     return layers
 
 

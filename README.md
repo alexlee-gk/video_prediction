@@ -24,6 +24,7 @@ cd video_prediction
 ```
 - Install TensorFlow >= 1.9 and dependencies from http://tensorflow.org/
 - Install ffmpeg (optional, used to generate GIFs for visualization, e.g. in TensorBoard)
+- Install [NCCL](https://developer.nvidia.com/nccl) (optional, used for multi-GPU support)
 - Install other dependencies
 ```bash
 pip install -r requirements.txt

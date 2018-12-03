@@ -118,7 +118,7 @@ class BaseVideoDataset(object):
         """
         raise NotImplementedError
 
-    def make_batch(self, batch_size):
+    def make_dataset(self, batch_size):
         filenames = self.filenames
         if self.mode == 'train':
             random.shuffle(filenames)
@@ -129,17 +129,20 @@ class BaseVideoDataset(object):
             dataset = dataset.apply(tf.contrib.data.shuffle_and_repeat(buffer_size=1024, count=self.num_epochs))
         else:
             dataset = dataset.repeat(self.num_epochs)
-        dataset = dataset.apply(tf.contrib.data.map_and_batch(self.parser, batch_size))
+
+        def _parser(serialized_example):
+            state_like_seqs, action_like_seqs = self.parser(serialized_example)
+            seqs = OrderedDict(list(state_like_seqs.items()) + list(action_like_seqs.items()))
+            return seqs
+
+        dataset = dataset.apply(tf.contrib.data.map_and_batch(_parser, batch_size, drop_remainder=True))
         dataset = dataset.prefetch(batch_size)
+        return dataset
 
+    def make_batch(self, batch_size):
+        dataset = self.make_dataset(batch_size)
         iterator = dataset.make_one_shot_iterator()
-        state_like_batches, action_like_batches = iterator.get_next()
-
-        input_batches = OrderedDict(list(state_like_batches.items()) + list(action_like_batches.items()))
-        for input_batch in input_batches.values():
-            input_batch.set_shape([batch_size] + [None] * (input_batch.shape.ndims - 1))
-        target_batches = state_like_batches['images'][:, self.hparams.context_frames:]
-        return input_batches, target_batches
+        return iterator.get_next()
 
     def decode_and_preprocess_images(self, image_buffers, image_shape):
         def decode_and_preprocess_image(image_buffer):
@@ -444,10 +447,9 @@ if __name__ == '__main__':
     from video_prediction import datasets
 
     datasets = [
-        datasets.GoogleRobotVideoDataset('data/push/push_testseen', mode='test'),
         datasets.SV2PVideoDataset('data/shape', mode='val'),
         datasets.SV2PVideoDataset('data/humans', mode='val'),
-        datasets.SoftmotionVideoDataset('data/softmotion30_v1', mode='val'),
+        datasets.SoftmotionVideoDataset('data/bair', mode='val'),
         datasets.KTHVideoDataset('data/kth', mode='val'),
         datasets.UCF101VideoDataset('data/ucf101', mode='val'),
     ]
@@ -456,7 +458,7 @@ if __name__ == '__main__':
     sess = tf.Session()
 
     for dataset in datasets:
-        inputs, _ = dataset.make_batch(batch_size)
+        inputs = dataset.make_batch(batch_size)
         images = inputs['images']
         images = tf.reshape(images, [-1] + images.get_shape().as_list()[2:])
         images = sess.run(images)

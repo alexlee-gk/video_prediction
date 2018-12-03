@@ -10,13 +10,11 @@ import math
 import os
 import random
 import time
-from collections import OrderedDict
 
 import numpy as np
 import tensorflow as tf
 
 from video_prediction import datasets, models
-from video_prediction.utils import ffmpeg_gif, tf_utils
 
 
 def main():
@@ -29,6 +27,7 @@ def main():
     parser.add_argument("--output_dir", help="output directory where json files, summary, model, gifs, etc are saved. "
                                              "default is logs_dir/model_fname, where model_fname consists of "
                                              "information from model and model_hparams")
+    parser.add_argument("--output_dir_postfix", default="")
     parser.add_argument("--checkpoint", help="directory with checkpoint or checkpoint name (e.g. checkpoint_dir/model-200000)")
     parser.add_argument("--resume", action='store_true', help='resume from lastest checkpoint in output_dir.')
 
@@ -44,7 +43,6 @@ def main():
     parser.add_argument("--eval_summary_freq", type=int, default=0, help="save eval summaries every eval_summary_freq steps")
     parser.add_argument("--progress_freq", type=int, default=100, help="display progress every progress_freq steps")
     parser.add_argument("--metrics_freq", type=int, default=0, help="run and display metrics every metrics_freq step")
-    parser.add_argument("--gif_freq", type=int, default=0, help="save gifs of predicted frames every gif_freq steps")
     parser.add_argument("--save_freq", type=int, default=5000, help="save model every save_freq steps, 0 to disable")
     parser.add_argument("--accum_eval_summary_num_samples", type=int, default=256, help="the eval_accum_summary is run accum_eval_summary_num_samples // batch_size number of times")
 
@@ -73,7 +71,7 @@ def main():
             if t in '[]':
                 t = ''
             model_fname += t
-        args.output_dir = os.path.join(args.logs_dir, model_fname)
+        args.output_dir = os.path.join(args.logs_dir, model_fname) + args.output_dir_postfix
 
     if args.resume:
         if args.checkpoint:
@@ -134,17 +132,20 @@ def main():
         hparams_dict['repeat'] = dataset.hparams.time_shift
         return hparams_dict
 
+    variable_scope = tf.get_variable_scope()
+    variable_scope.set_use_resource(True)
+
     VideoPredictionModel = models.get_model_class(args.model)
-    train_model = VideoPredictionModel(mode='train', hparams_dict=override_hparams_dict(train_dataset), hparams=args.model_hparams)
-    val_models = [VideoPredictionModel(mode='val', hparams_dict=override_hparams_dict(val_dataset), hparams=args.model_hparams)
+    train_model = VideoPredictionModel(hparams_dict=override_hparams_dict(train_dataset), hparams=args.model_hparams)
+    val_models = [VideoPredictionModel(hparams_dict=override_hparams_dict(val_dataset), hparams=args.model_hparams)
                   for val_dataset in val_datasets]
 
     batch_size = train_model.hparams.batch_size
     with tf.variable_scope('') as training_scope:
-        train_model.build_graph(*train_dataset.make_batch(batch_size))
+        train_model.build_graph(train_dataset.make_batch(batch_size))
     for val_model, val_dataset in zip(val_models, val_datasets):
         with tf.variable_scope(training_scope, reuse=True):
-            val_model.build_graph(*val_dataset.make_batch(batch_size))
+            val_model.build_graph(val_dataset.make_batch(batch_size))
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
@@ -155,22 +156,12 @@ def main():
     with open(os.path.join(args.output_dir, "model_hparams.json"), "w") as f:
         f.write(json.dumps(train_model.hparams.values(), sort_keys=True, indent=4))
 
-    if args.gif_freq:
-        val_model = val_models[0]
-        val_tensors = OrderedDict()
-        context_images = val_model.inputs['images'][:, :val_model.hparams.context_frames]
-        val_tensors['gen_images_vis'] = tf.concat([context_images, val_model.gen_images], axis=1)
-        if val_model.gen_images_enc is not None:
-            val_tensors['gen_images_enc_vis'] = tf.concat([context_images, val_model.gen_images_enc], axis=1)
-        val_tensors.update({name: tensor for name, tensor in val_model.inputs.items() if tensor.shape.ndims >= 4})
-        val_tensors['targets'] = val_model.targets
-        val_tensors.update({name: tensor for name, tensor in val_model.outputs.items() if tensor.shape.ndims >= 4})
-        val_tensor_clips = OrderedDict([(name, tf_utils.tensor_to_clip(output)) for name, output in val_tensors.items()])
-
     with tf.name_scope("parameter_count"):
-        parameter_count = tf.reduce_sum([tf.reduce_prod(tf.shape(v)) for v in tf.trainable_variables()])
+        # exclude trainable variables that are replicas (used in multi-gpu setting)
+        trainable_variables = set(tf.trainable_variables()) & set(train_model.saveable_variables)
+        parameter_count = tf.reduce_sum([tf.reduce_prod(tf.shape(v)) for v in trainable_variables])
 
-    saver = tf.train.Saver(max_to_keep=3)
+    saver = tf.train.Saver(var_list=train_model.saveable_variables, max_to_keep=2)
 
     if args.summary_freq or args.image_summary_freq or args.eval_summary_freq or args.accum_eval_summary_num_samples:
         summary_writer = tf.summary.FileWriter(args.output_dir)
@@ -185,6 +176,8 @@ def main():
         sess.run(tf.global_variables_initializer())
         sess.run(tf.local_variables_initializer())
         train_model.restore(sess, args.checkpoint)
+        sess.run(train_model.post_init_ops)  # not necessary for val_model
+        sess.graph.finalize()
 
         start_step = sess.run(global_step)
         # start at one step earlier to log everything without doing any training
@@ -273,20 +266,8 @@ def main():
                 saver.save(sess, os.path.join(args.output_dir, "model"), global_step=global_step)
                 print("done")
 
-            if should(args.gif_freq):
-                image_dir = os.path.join(args.output_dir, 'images')
-                if not os.path.exists(image_dir):
-                    os.makedirs(image_dir)
-
-                gif_clips = sess.run(val_tensor_clips)
-                gif_step = results["global_step"]
-                for name, clip in gif_clips.items():
-                    filename = "%08d-%s.gif" % (gif_step, name)
-                    print("saving gif to", os.path.join(image_dir, filename))
-                    ffmpeg_gif.save_gif(os.path.join(image_dir, filename), clip, fps=4)
-                    print("done")
-
         if args.accum_eval_summary_num_samples:
+            sess.run(val_model.accum_eval_metrics_reset_op)
             accum_eval_summary_num_updates = args.accum_eval_summary_num_samples // batch_size
             for update_step in range(accum_eval_summary_num_updates):
                 print('evaluating %d / %d' % (update_step + 1, accum_eval_summary_num_updates))

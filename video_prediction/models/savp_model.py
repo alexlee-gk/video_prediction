@@ -1,4 +1,7 @@
+import collections
+import functools
 import itertools
+from collections import OrderedDict
 
 import numpy as np
 import tensorflow as tf
@@ -115,10 +118,9 @@ def create_encoder(inputs, e_net='legacy', use_e_rnn=False, rnn='lstm', **kwargs
             raise NotImplementedError
 
         h = nest.map_structure(unflatten, h)
-        for i in range(2):
-            with tf.variable_scope('%s_h%d' % (rnn, i)):
-                rnn_cell = RNNCell(kwargs['nef'] * 4)
-                h, _ = tf_utils.unroll_rnn(rnn_cell, h)
+        with tf.variable_scope('%s' % rnn):
+            rnn_cell = RNNCell(kwargs['nef'] * 4)
+            h, _ = tf_utils.unroll_rnn(rnn_cell, h)
         h = flatten(h, 0, len(batch_shape) - 1)
 
         with tf.variable_scope('z_mu'):
@@ -140,13 +142,45 @@ def create_encoder(inputs, e_net='legacy', use_e_rnn=False, rnn='lstm', **kwargs
     return outputs
 
 
+def create_prior(batch_shape, rnn='lstm', **kwargs):
+    unflatten = lambda x: tf.reshape(x, batch_shape + x.shape.as_list()[1:])
+
+    with tf.variable_scope('input'):
+        h = tf.get_variable('input', kwargs['nef'] * 4,
+                            dtype=tf.float32, initializer=tf.zeros_initializer())
+    h = tf.tile(h[None, None], list(batch_shape) + [1])
+
+    if rnn == 'lstm':
+        RNNCell = functools.partial(tf.nn.rnn_cell.LSTMCell, name='basic_lstm_cell')
+    elif rnn == 'gru':
+        RNNCell = tf.contrib.rnn.GRUCell
+    else:
+        raise NotImplementedError
+
+    with tf.variable_scope('%s' % rnn):
+        rnn_cell = RNNCell(kwargs['nef'] * 4)
+        h, _ = tf_utils.unroll_rnn(rnn_cell, h)
+    h = flatten(h, 0, 1)
+
+    with tf.variable_scope('z_mu'):
+        z_mu = dense(h, kwargs['nz'])
+    with tf.variable_scope('z_log_sigma_sq'):
+        z_log_sigma_sq = dense(h, kwargs['nz'])
+        z_log_sigma_sq = tf.clip_by_value(z_log_sigma_sq, -10, 10)
+    outputs = {'prior_zs_mu': z_mu, 'prior_zs_log_sigma_sq': z_log_sigma_sq}
+
+    outputs = nest.map_structure(unflatten, outputs)
+    return outputs
+
+
 def encoder_fn(inputs, hparams=None):
     images = inputs['images']
-    image_pairs = tf.concat([images[:hparams.sequence_length - 1],
-                             images[1:hparams.sequence_length]], axis=-1)
+    sequence_length = tf.minimum(hparams.sequence_length, tf.shape(images)[0])
+    image_pairs = tf.concat([images[:sequence_length - 1],
+                             images[1:sequence_length]], axis=-1)
     if 'actions' in inputs:
-        image_pairs = tile_concat([image_pairs,
-                                   tf.expand_dims(tf.expand_dims(inputs['actions'], axis=-2), axis=-2)], axis=-1)
+        image_pairs = tile_concat(
+            [image_pairs, inputs['actions'][..., None, None, :]], axis=-1)
     outputs = create_encoder(image_pairs,
                              e_net=hparams.e_net,
                              use_e_rnn=hparams.use_e_rnn,
@@ -158,28 +192,81 @@ def encoder_fn(inputs, hparams=None):
     return outputs
 
 
-def discriminator_fn(targets, inputs=None, hparams=None):
+def prior_fn(inputs, hparams=None):
+    images = inputs['images']
+    batch_shape = images[:hparams.sequence_length - 1].shape[:-3].as_list()
+    outputs = create_prior(batch_shape,
+                           rnn=hparams.rnn,
+                           nz=hparams.nz,
+                           nef=hparams.nef)
+    return outputs
+
+
+def _discriminator_fn(targets, hparams=None):
+    # TODO: do not pass inputs
     outputs = {}
     if hparams.gan_weight or hparams.vae_gan_weight:
-        _, pix2pix_outputs = pix2pix_model.discriminator_fn(targets, inputs=inputs, hparams=hparams)
+        _, pix2pix_outputs = pix2pix_model.discriminator_fn(targets, inputs={}, hparams=hparams)
         outputs.update(pix2pix_outputs)
     if hparams.image_gan_weight or hparams.image_vae_gan_weight or \
             hparams.video_gan_weight or hparams.video_vae_gan_weight or \
             hparams.acvideo_gan_weight or hparams.acvideo_vae_gan_weight:
-        _, mocogan_outputs = mocogan_model.discriminator_fn(targets, inputs=inputs, hparams=hparams)
+        _, mocogan_outputs = mocogan_model.discriminator_fn(targets, inputs={}, hparams=hparams)
         outputs.update(mocogan_outputs)
     if hparams.image_sn_gan_weight or hparams.image_sn_vae_gan_weight or \
             hparams.video_sn_gan_weight or hparams.video_sn_vae_gan_weight or \
             hparams.images_sn_gan_weight or hparams.images_sn_vae_gan_weight:
-        _, spectral_norm_outputs = spectral_norm_model.discriminator_fn(targets, inputs=inputs, hparams=hparams)
+        _, spectral_norm_outputs = spectral_norm_model.discriminator_fn(targets, inputs={}, hparams=hparams)
         outputs.update(spectral_norm_outputs)
-    return None, outputs
+    return outputs
+
+
+def discriminator_fn(inputs, outputs, mode, hparams):
+    # TODO: use entire sequence
+    # do the encoder version first so that it isn't affected by the reuse_variables() call
+    if hparams.nz == 0:
+        discrim_outputs_enc_real = collections.OrderedDict()
+        discrim_outputs_enc_fake = collections.OrderedDict()
+    else:
+        images_enc_real = inputs['images'][hparams.context_frames:]
+        images_enc_fake = outputs['gen_images_enc'][hparams.context_frames - 1:]
+        if hparams.use_same_discriminator:
+            with tf.name_scope("real"):
+                discrim_outputs_enc_real = _discriminator_fn(images_enc_real, hparams)
+            tf.get_variable_scope().reuse_variables()
+            with tf.name_scope("fake"):
+                discrim_outputs_enc_fake = _discriminator_fn(images_enc_fake, hparams)
+        else:
+            with tf.variable_scope('encoder'), tf.name_scope("real"):
+                discrim_outputs_enc_real = _discriminator_fn(images_enc_real, hparams)
+            with tf.variable_scope('encoder', reuse=True), tf.name_scope("fake"):
+                discrim_outputs_enc_fake = _discriminator_fn(images_enc_fake, hparams)
+
+    images_real = inputs['images'][hparams.context_frames:]
+    images_fake = outputs['gen_images'][hparams.context_frames - 1:]
+    with tf.name_scope("real"):
+        discrim_outputs_real = _discriminator_fn(images_real, hparams)
+    tf.get_variable_scope().reuse_variables()
+    with tf.name_scope("fake"):
+        discrim_outputs_fake = _discriminator_fn(images_fake, hparams)
+
+    discrim_outputs_real = OrderedDict([(k + '_real', v) for k, v in discrim_outputs_real.items()])
+    discrim_outputs_fake = OrderedDict([(k + '_fake', v) for k, v in discrim_outputs_fake.items()])
+    discrim_outputs_enc_real = OrderedDict([(k + '_enc_real', v) for k, v in discrim_outputs_enc_real.items()])
+    discrim_outputs_enc_fake = OrderedDict([(k + '_enc_fake', v) for k, v in discrim_outputs_enc_fake.items()])
+    outputs = [discrim_outputs_real, discrim_outputs_fake,
+               discrim_outputs_enc_real, discrim_outputs_enc_fake]
+    total_num_outputs = sum([len(output) for output in outputs])
+    outputs = collections.OrderedDict(itertools.chain(*[output.items() for output in outputs]))
+    assert len(outputs) == total_num_outputs  # ensure no output is lost because of repeated keys
+    return outputs
 
 
 class DNACell(tf.nn.rnn_cell.RNNCell):
-    def __init__(self, inputs, hparams, reuse=None):
+    def __init__(self, inputs, mode, hparams, reuse=None):
         super(DNACell, self).__init__(_reuse=reuse)
         self.inputs = inputs
+        self.mode = mode
         self.hparams = hparams
 
         if self.hparams.where_add not in ('input', 'all', 'middle'):
@@ -247,6 +334,8 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         num_masks = self.hparams.last_frames * self.hparams.num_transformed_images + \
             int(bool(self.hparams.prev_image_background)) + \
             int(bool(self.hparams.first_image_background and not self.hparams.context_images_background)) + \
+            int(bool(self.hparams.last_image_background and not self.hparams.context_images_background)) + \
+            int(bool(self.hparams.last_context_image_background and not self.hparams.context_images_background)) + \
             (self.hparams.context_frames if self.hparams.context_images_background else 0) + \
             int(bool(self.hparams.generate_scratch_image))
         output_size = {
@@ -297,8 +386,22 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             state_size['gen_state'] = inputs['states'].shape[2:]
         self._state_size = state_size
 
+        if self.hparams.learn_initial_state:
+            learnable_initial_state_size = {k: v for k, v in state_size.items()
+                                            if k in ('conv_rnn_states', 'rnn_z_state')}
+        else:
+            learnable_initial_state_size = {}
+        learnable_initial_state_flat = []
+        for i, size in enumerate(nest.flatten(learnable_initial_state_size)):
+            with tf.variable_scope('initial_state_%d' % i):
+                state = tf.get_variable('initial_state', size,
+                                        dtype=tf.float32, initializer=tf.zeros_initializer())
+                learnable_initial_state_flat.append(state)
+        self._learnable_initial_state = nest.pack_sequence_as(
+            learnable_initial_state_size, learnable_initial_state_flat)
+
         ground_truth_sampling_shape = [self.hparams.sequence_length - 1 - self.hparams.context_frames, batch_size]
-        if self.hparams.schedule_sampling == 'none':
+        if self.hparams.schedule_sampling == 'none' or self.mode != 'train':
             ground_truth_sampling = tf.constant(False, dtype=tf.bool, shape=ground_truth_sampling_shape)
         elif self.hparams.schedule_sampling in ('inverse_sigmoid', 'linear'):
             if self.hparams.schedule_sampling == 'inverse_sigmoid':
@@ -334,6 +437,9 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
 
     def zero_state(self, batch_size, dtype):
         init_state = super(DNACell, self).zero_state(batch_size, dtype)
+        learnable_init_state = nest.map_structure(
+            lambda x: tf.tile(x[None], [batch_size] + [1] * x.shape.ndims), self._learnable_initial_state)
+        init_state.update(learnable_init_state)
         init_state['last_images'] = [self.inputs['images'][0]] * self.hparams.last_frames
         if 'pix_distribs' in self.inputs:
             init_state['last_pix_distribs'] = [self.inputs['pix_distribs'][0]] * self.hparams.last_frames
@@ -341,7 +447,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
 
     def _rnn_func(self, inputs, state, num_units):
         if self.hparams.rnn == 'lstm':
-            RNNCell = tf.contrib.rnn.BasicLSTMCell
+            RNNCell = functools.partial(tf.nn.rnn_cell.LSTMCell, name='basic_lstm_cell')
         elif self.hparams.rnn == 'gru':
             RNNCell = tf.contrib.rnn.GRUCell
         else:
@@ -352,10 +458,10 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
     def _conv_rnn_func(self, inputs, state, filters):
         inputs_shape = inputs.get_shape().as_list()
         input_shape = inputs_shape[1:]
-        if self.hparams.norm_layer == 'none':
+        if self.hparams.conv_rnn_norm_layer == 'none':
             normalizer_fn = None
         else:
-            normalizer_fn = ops.get_norm_layer(self.hparams.norm_layer)
+            normalizer_fn = ops.get_norm_layer(self.hparams.conv_rnn_norm_layer)
         if self.hparams.conv_rnn == 'lstm':
             Conv2DRNNCell = BasicConv2DLSTMCell
         elif self.hparams.conv_rnn == 'gru':
@@ -370,7 +476,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         else:
             conv_rnn_cell = Conv2DRNNCell(input_shape, filters, kernel_size=(5, 5),
                                           normalizer_fn=normalizer_fn,
-                                          separate_norms=self.hparams.norm_layer == 'layer',
+                                          separate_norms=self.hparams.conv_rnn_norm_layer == 'layer',
                                           reuse=tf.get_variable_scope().reuse)
             outputs = conv_rnn_cell(inputs, state)
         return outputs
@@ -556,6 +662,14 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                 transformed_images.append(image)
             if self.hparams.first_image_background and not self.hparams.context_images_background:
                 transformed_images.append(self.inputs['images'][0])
+            if self.hparams.last_image_background and not self.hparams.context_images_background:
+                transformed_images.append(self.inputs['images'][self.hparams.context_frames - 1])
+            if self.hparams.last_context_image_background and not self.hparams.context_images_background:
+                last_context_image = tf.cond(
+                    tf.less(t, self.hparams.context_frames),
+                    lambda: self.inputs['images'][t],
+                    lambda: self.inputs['images'][self.hparams.context_frames - 1])
+                transformed_images.append(last_context_image)
             if self.hparams.context_images_background:
                 transformed_images.extend(tf.unstack(self.inputs['images'][:self.hparams.context_frames]))
             if self.hparams.generate_scratch_image:
@@ -573,6 +687,14 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                     transformed_pix_distribs.append(pix_distrib)
                 if self.hparams.first_image_background and not self.hparams.context_images_background:
                     transformed_pix_distribs.append(self.inputs['pix_distribs'][0])
+                if self.hparams.last_image_background and not self.hparams.context_images_background:
+                    transformed_pix_distribs.append(self.inputs['pix_distribs'][self.hparams.context_frames - 1])
+                if self.hparams.last_context_image_background and not self.hparams.context_images_background:
+                    last_context_pix_distrib = tf.cond(
+                        tf.less(t, self.hparams.context_frames),
+                        lambda: self.inputs['pix_distribs'][t],
+                        lambda: self.inputs['pix_distribs'][self.hparams.context_frames - 1])
+                    transformed_pix_distribs.append(last_context_pix_distrib)
                 if self.hparams.context_images_background:
                     transformed_pix_distribs.extend(tf.unstack(self.inputs['pix_distribs'][:self.hparams.context_frames]))
                 if self.hparams.generate_scratch_image:
@@ -641,14 +763,30 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         return outputs, new_states
 
 
-def generator_fn(inputs, outputs_enc=None, hparams=None):
+def _generator_fn(inputs, outputs_enc, mode, hparams, use_posterior=False):
     batch_size = inputs['images'].shape[1].value
     inputs = {name: tf_utils.maybe_pad_or_slice(input, hparams.sequence_length - 1)
               for name, input in inputs.items()}
     if hparams.nz:
+        if not use_posterior and hparams.learn_prior:
+            prior = prior_fn(inputs, hparams)
+
         def sample_zs():
-            if outputs_enc is None:
-                zs = tf.random_normal([hparams.sequence_length - 1, batch_size, hparams.nz], 0, 1)
+            if not use_posterior:
+                if hparams.learn_prior:
+                    prior_zs_mu = prior['prior_zs_mu']
+                    prior_zs_log_sigma_sq = prior['prior_zs_log_sigma_sq']
+                    eps = tf.random_normal([hparams.sequence_length - 1, batch_size, hparams.nz], 0, 1)
+                    zs = prior_zs_mu + tf.sqrt(tf.exp(prior_zs_log_sigma_sq)) * eps
+                else:
+                    zs = tf.random_normal([hparams.sequence_length - 1, batch_size, hparams.nz], 0, 1)
+
+                if outputs_enc:
+                    enc_zs_mu = outputs_enc['enc_zs_mu'][:hparams.context_frames - 1]
+                    enc_zs_log_sigma_sq = outputs_enc['enc_zs_log_sigma_sq'][:hparams.context_frames - 1]
+                    enc_eps = tf.random_normal([hparams.context_frames - 1, batch_size, hparams.nz], 0, 1)
+                    enc_zs = enc_zs_mu + tf.sqrt(tf.exp(enc_zs_log_sigma_sq)) * enc_eps
+                    zs = tf.concat([enc_zs, zs[hparams.context_frames - 1:]], axis=0)
             else:
                 enc_zs_mu = outputs_enc['enc_zs_mu']
                 enc_zs_log_sigma_sq = outputs_enc['enc_zs_log_sigma_sq']
@@ -657,9 +795,9 @@ def generator_fn(inputs, outputs_enc=None, hparams=None):
             return zs
         inputs['zs'] = sample_zs()
     else:
-        if outputs_enc is not None:
+        if outputs_enc:
             raise ValueError('outputs_enc has to be None when nz is 0.')
-    cell = DNACell(inputs, hparams)
+    cell = DNACell(inputs, mode, hparams)
 
     outputs, _ = tf_utils.unroll_rnn(cell, inputs)
     if hparams.nz:
@@ -667,29 +805,47 @@ def generator_fn(inputs, outputs_enc=None, hparams=None):
                           for name, input in inputs.items() if name != 'zs'}
         inputs_samples['zs'] = tf.concat([sample_zs() for _ in range(hparams.num_samples)], axis=1)
         with tf.variable_scope(tf.get_variable_scope(), reuse=True):
-            cell_samples = DNACell(inputs_samples, hparams)
-            outputs_samples, _ = tf.nn.dynamic_rnn(cell_samples, inputs_samples, dtype=tf.float32,
-                                                   swap_memory=False, time_major=True)
+            cell_samples = DNACell(inputs_samples, mode, hparams)
+            outputs_samples, _ = tf_utils.unroll_rnn(cell_samples, inputs_samples)
         gen_images_samples = outputs_samples['gen_images']
         gen_images_samples = tf.stack(tf.split(gen_images_samples, hparams.num_samples, axis=1), axis=-1)
         gen_images_samples_avg = tf.reduce_mean(gen_images_samples, axis=-1)
         outputs['gen_images_samples'] = gen_images_samples
         outputs['gen_images_samples_avg'] = gen_images_samples_avg
-    # the RNN outputs generated images from time step 1 to sequence_length,
-    # but generator_fn should only return images past context_frames
-    outputs = {name: output[hparams.context_frames - 1:] for name, output in outputs.items()}
-    gen_images = outputs['gen_images']
     outputs['ground_truth_sampling_mean'] = tf.reduce_mean(tf.to_float(cell.ground_truth[hparams.context_frames:]))
-    return gen_images, outputs
+    if hparams.nz and not use_posterior and hparams.learn_prior:
+        outputs.update(prior)
+    return outputs
+
+
+def generator_fn(inputs, mode, hparams):
+    if hparams.nz == 0:
+        outputs_enc = {}
+    else:
+        with tf.variable_scope('encoder'):
+            outputs_enc = encoder_fn(inputs, hparams)
+
+    gen_outputs = _generator_fn(inputs, outputs_enc, mode, hparams)
+
+    if hparams.nz == 0:
+        gen_outputs_enc = {}
+    else:
+        tf.get_variable_scope().reuse_variables()
+        gen_outputs_enc = _generator_fn(inputs, outputs_enc, mode, hparams, use_posterior=True)
+        gen_outputs_enc = collections.OrderedDict([(k + '_enc', v) for k, v in gen_outputs_enc.items()])
+
+    outputs = [gen_outputs, outputs_enc, gen_outputs_enc]
+    total_num_outputs = sum([len(output) for output in outputs])
+    outputs = collections.OrderedDict(itertools.chain(*[output.items() for output in outputs]))
+    assert len(outputs) == total_num_outputs  # ensure no output is lost because of repeated keys
+    return outputs
 
 
 class SAVPVideoPredictionModel(VideoPredictionModel):
     def __init__(self, *args, **kwargs):
         super(SAVPVideoPredictionModel, self).__init__(
-            generator_fn, discriminator_fn, encoder_fn, *args, **kwargs)
-        if self.hparams.e_net == 'none' or self.hparams.nz == 0:
-            self.encoder_fn = None
-        if self.hparams.d_net == 'none':
+            generator_fn, discriminator_fn, *args, **kwargs)
+        if self.hparams.d_net == 'none' or self.mode != 'train':
             self.discriminator_fn = None
         self.deterministic = not self.hparams.nz
 
@@ -705,20 +861,25 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
             d_downsample_layer='conv_pool2d',
             d_conditional=True,
             d_use_gt_inputs=True,
+            use_same_discriminator=False,
             ngf=32,
             downsample_layer='conv_pool2d',
             upsample_layer='upsample_conv2d',
-            transformation='cdna',
             activation_layer='relu',  # for generator only
+            transformation='cdna',
             kernel_size=(5, 5),
             dilation_rate=(1, 1),
             where_add='all',
+            learn_initial_state=False,
             rnn='lstm',
             conv_rnn='lstm',
+            conv_rnn_norm_layer='instance',
             num_transformed_images=4,
             last_frames=1,
             prev_image_background=True,
             first_image_background=True,
+            last_image_background=False,
+            last_context_image_background=False,
             context_images_background=False,
             generate_scratch_image=True,
             dependent_mask=True,
@@ -727,6 +888,7 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
             schedule_sampling_steps=(0, 100000),
             e_net='n_layer',
             use_e_rnn=False,
+            learn_prior=False,
             nz=8,
             num_samples=8,
             nef=64,
@@ -735,20 +897,6 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
             ablation_rnn=False,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
-
-    def parse_hparams(self, hparams_dict, hparams):
-        hparams = super(SAVPVideoPredictionModel, self).parse_hparams(hparams_dict, hparams)
-        if self.mode == 'test':
-            def override_hparams_maybe(name, value):
-                orig_value = hparams.values()[name]
-                if orig_value != value:
-                    print('Overriding hparams from %s=%r to %r for mode=%s.' %
-                          (name, orig_value, value, self.mode))
-                    hparams.set_hparam(name, value)
-            override_hparams_maybe('d_net', 'none')
-            override_hparams_maybe('e_net', 'none')
-            override_hparams_maybe('schedule_sampling', 'none')
-        return hparams
 
 
 def apply_dna_kernels(image, kernels, dilation_rate=(1, 1)):
