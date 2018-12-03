@@ -37,7 +37,8 @@ def py_gif_summary(tag, images, max_outputs, fps):
   Raises:
     ValueError: If `images` is not a 5-D `uint8` array with 1 or 3 channels.
   """
-  if isinstance(tag, bytes):
+  is_bytes = isinstance(tag, bytes)
+  if is_bytes:
     tag = tag.decode("utf-8")
   images = np.asarray(images)
   if images.dtype != np.uint8:
@@ -68,10 +69,10 @@ def py_gif_summary(tag, images, max_outputs, fps):
         with io.BytesIO() as output:
           Image.fromarray(images[i][0]).save(output, "PNG")
           image_summ.encoded_image_string = output.getvalue()
-      except ImportError as e:
+      except:
         tf.logging.warning(
             "Gif summaries requires ffmpeg or PIL to be installed: %s", e)
-        image_summ.encoded_image_string = ""
+        image_summ.encoded_image_string = "".encode('utf-8') if is_bytes else ""
     if num_outputs == 1:
       summ_tag = "{}/gif".format(tag)
     else:
