@@ -946,8 +946,8 @@ def flatten(input, axis=1, end_axis=-1):
     Returns:
         A M-D tensor where M = N - (end_axis - axis)
     """
-    input_shape = input.shape
-    input_rank = input_shape.ndims
+    input_shape = tf.shape(input)
+    input_rank = tf.shape(input_shape)[0]
     if axis < 0:
         axis = input_rank + axis
     if end_axis < 0:
