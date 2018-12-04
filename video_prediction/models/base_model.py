@@ -361,7 +361,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
         default_hparams = super(VideoPredictionModel, self).get_default_hparams_dict()
         hparams = dict(
             batch_size=16,
-            lr=0.1,
+            lr=0.001,
             end_lr=0.0,
             decay_steps=(200000, 300000),
             lr_boundaries=(0,),
@@ -464,7 +464,8 @@ class VideoPredictionModel(BaseVideoPredictionModel):
         outputs_tuple = nest.map_structure(transpose_batch_time, outputs_tuple)
         losses_tuple = (d_losses, g_losses, g_losses_post)
         losses_tuple = nest.map_structure(tf.convert_to_tensor, losses_tuple)
-        loss_tuple = (sum(loss * weight for loss, weight in losses.values()) for losses in losses_tuple)
+        loss_tuple = tuple(tf.accumulate_n([loss * weight for loss, weight in losses.values()])
+                           if losses else tf.zeros(()) for losses in losses_tuple)
         metrics_tuple = (metrics, eval_metrics)
         metrics_tuple = nest.map_structure(transpose_batch_time, metrics_tuple)
         return outputs_tuple, losses_tuple, loss_tuple, metrics_tuple

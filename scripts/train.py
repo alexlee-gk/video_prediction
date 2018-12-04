@@ -218,6 +218,8 @@ def main():
             if step >= 0:
                 fetches["train_op"] = model.train_op
             if should(args.progress_freq):
+                fetches['d_loss'] = model.d_loss
+                fetches['g_loss'] = model.g_loss
                 fetches['d_losses'] = model.d_losses
                 fetches['g_losses'] = model.g_losses
                 if isinstance(model.learning_rate, tf.Tensor):
@@ -293,8 +295,12 @@ def main():
                     print("          image/sec %0.1f  remaining %dm (%0.1fh) (%0.1fd)" %
                           (images_per_sec, remaining_time / 60, remaining_time / 60 / 60, remaining_time / 60 / 60 / 24))
 
-                for name, loss in itertools.chain(results['d_losses'].items(), results['g_losses'].items()):
-                    print(name, loss)
+                print("d_loss", results["d_loss"])
+                for name, loss in results['d_losses'].items():
+                    print("    ", name, loss)
+                print("g_loss", results["g_loss"])
+                for name, loss in results['g_losses'].items():
+                    print("    ", name, loss)
                 if isinstance(model.learning_rate, tf.Tensor):
                     print("learning_rate", results["learning_rate"])
 
