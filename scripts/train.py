@@ -266,8 +266,8 @@ def main():
                 summary_writer.add_summary(results["eval_summary"], results["global_step"])
                 summary_writer.add_summary(val_results["eval_summary"], val_results["global_step"])
                 print("done")
-            if should(args.accum_eval_summary_freq) and step >= 0:
-                # never evaluate this at the beginning since it's expensive
+            if should(args.accum_eval_summary_freq) and (step >= 0 or (step + 1) == (max_steps - start_step)):
+                # never evaluate this at the beginning since it's expensive, unless it's the last iteration
                 sess.run(model.accum_eval_metrics_reset_op)
                 accum_eval_summary_num_updates = args.accum_eval_summary_num_samples // batch_size
                 val_fetches = {"global_step": global_step, "accum_eval_summary": model.accum_eval_summary_op}
