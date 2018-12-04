@@ -753,8 +753,11 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             gen_losses["gen_state_loss"] = (gen_state_loss, hparams.state_weight)
         if hparams.tv_weight:
             gen_flows = outputs.get('gen_flows_enc', outputs['gen_flows'])
-            gen_flows_reshaped = flatten(flatten(gen_flows, 0, 1), -2)
-            gen_tv_loss = tf.reduce_mean(tf.image.total_variation(gen_flows_reshaped))
+            flow_diff1 = gen_flows[..., 1:, :, :, :] - gen_flows[..., :-1, :, :, :]
+            flow_diff2 = gen_flows[..., :, 1:, :, :] - gen_flows[..., :, :-1, :, :]
+            # sum over the multiple transformations but take the mean for the other dimensions
+            gen_tv_loss = (tf.reduce_mean(tf.reduce_sum(tf.abs(flow_diff1), axis=(-2, -1))) +
+                           tf.reduce_mean(tf.reduce_sum(tf.abs(flow_diff2), axis=(-2, -1))))
             gen_losses['gen_tv_loss'] = (gen_tv_loss, hparams.tv_weight)
         gan_weights = {'': hparams.gan_weight,
                        '_tuple': hparams.tuple_gan_weight,
