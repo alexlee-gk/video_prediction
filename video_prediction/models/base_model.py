@@ -725,9 +725,8 @@ class VideoPredictionModel(BaseVideoPredictionModel):
         hparams = self.hparams
         gen_losses = OrderedDict()
         if hparams.l1_weight or hparams.l2_weight or hparams.vgg_cdist_weight:
-            # TODO: use entire sequences
-            gen_images = outputs.get('gen_images_enc', outputs['gen_images'])[hparams.context_frames - 1:]
-            target_images = inputs['images'][hparams.context_frames:]
+            gen_images = outputs.get('gen_images_enc', outputs['gen_images'])
+            target_images = inputs['images'][1:]
         if hparams.l1_weight:
             gen_l1_loss = vp.losses.l1_loss(gen_images, target_images)
             gen_losses["gen_l1_loss"] = (gen_l1_loss, hparams.l1_weight)
@@ -739,7 +738,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             gen_losses['gen_vgg_cdist_loss'] = (gen_vgg_cdist_loss, hparams.vgg_cdist_weight)
         if hparams.feature_l2_weight:
             gen_features = outputs.get('gen_features_enc', outputs['gen_features'])
-            target_features = outputs['features'][hparams.context_frames:]
+            target_features = outputs['features'][1:]
             gen_feature_l2_loss = vp.losses.l2_loss(gen_features, target_features)
             gen_losses["gen_feature_l2_loss"] = (gen_feature_l2_loss, hparams.feature_l2_weight)
         if hparams.ae_l2_weight:
@@ -749,7 +748,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             gen_losses["gen_ae_l2_loss"] = (gen_ae_l2_loss, hparams.ae_l2_weight)
         if hparams.state_weight:
             gen_states = outputs.get('gen_states_enc', outputs['gen_states'])
-            target_states = inputs['states'][hparams.context_frames:]
+            target_states = inputs['states'][1:]
             gen_state_loss = vp.losses.l2_loss(gen_states, target_states)
             gen_losses["gen_state_loss"] = (gen_state_loss, hparams.state_weight)
         if hparams.tv_weight:

@@ -222,14 +222,13 @@ def _discriminator_fn(targets, hparams=None):
 
 
 def discriminator_fn(inputs, outputs, mode, hparams):
-    # TODO: use entire sequence
     # do the encoder version first so that it isn't affected by the reuse_variables() call
     if hparams.nz == 0:
         discrim_outputs_enc_real = collections.OrderedDict()
         discrim_outputs_enc_fake = collections.OrderedDict()
     else:
-        images_enc_real = inputs['images'][hparams.context_frames:]
-        images_enc_fake = outputs['gen_images_enc'][hparams.context_frames - 1:]
+        images_enc_real = inputs['images'][1:]
+        images_enc_fake = outputs['gen_images_enc']
         if hparams.use_same_discriminator:
             with tf.name_scope("real"):
                 discrim_outputs_enc_real = _discriminator_fn(images_enc_real, hparams)
@@ -242,8 +241,8 @@ def discriminator_fn(inputs, outputs, mode, hparams):
             with tf.variable_scope('encoder', reuse=True), tf.name_scope("fake"):
                 discrim_outputs_enc_fake = _discriminator_fn(images_enc_fake, hparams)
 
-    images_real = inputs['images'][hparams.context_frames:]
-    images_fake = outputs['gen_images'][hparams.context_frames - 1:]
+    images_real = inputs['images'][1:]
+    images_fake = outputs['gen_images']
     with tf.name_scope("real"):
         discrim_outputs_real = _discriminator_fn(images_real, hparams)
     tf.get_variable_scope().reuse_variables()
