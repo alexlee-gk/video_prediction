@@ -700,6 +700,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
         add_scalar_summaries(self.d_losses)
         add_scalar_summaries(self.g_losses)
         add_scalar_summaries(self.metrics)
+        add_scalar_summaries({'d_loss': self.d_loss, 'g_loss': self.g_loss, 'loss': self.d_loss + self.g_loss})
         summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES)) - original_summaries
         # split summaries into non-image summaries and image summaries
         self.summary_op = tf.summary.merge(list(summaries - set(tf.get_collection(tf_utils.IMAGE_SUMMARIES))))
