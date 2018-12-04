@@ -251,7 +251,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                  discriminator_fn=None,
                  generator_scope='generator',
                  discriminator_scope='discriminator',
-                 aggregate_nccl=True,
+                 aggregate_nccl=False,
                  mode='train',
                  hparams_dict=None,
                  hparams=None,
