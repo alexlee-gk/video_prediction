@@ -56,6 +56,7 @@ def main():
     parser.add_argument("--progress_freq", type=int, default=100, help="display progress every progress_freq steps")
     parser.add_argument("--save_freq", type=int, default=5000, help="save frequence of model, 0 to disable")
 
+    parser.add_argument("--aggregate_nccl", type=int, default=0, help="whether to use nccl or cpu for gradient aggregation in multi-gpu training")
     parser.add_argument("--gpu_mem_frac", type=float, default=0, help="fraction of gpu memory to use")
     parser.add_argument("--seed", type=int)
 
@@ -146,7 +147,8 @@ def main():
     }
     model = VideoPredictionModel(
         hparams_dict=hparams_dict,
-        hparams=args.model_hparams)
+        hparams=args.model_hparams,
+        aggregate_nccl=args.aggregate_nccl)
 
     batch_size = model.hparams.batch_size
     train_tf_dataset = train_dataset.make_dataset(batch_size)
