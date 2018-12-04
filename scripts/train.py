@@ -140,11 +140,12 @@ def main():
     variable_scope.set_use_resource(True)
 
     VideoPredictionModel = models.get_model_class(args.model)
-    hparams_dict = {
+    hparams_dict = dict(model_hparams_dict)
+    hparams_dict.update({
         'context_frames': train_dataset.hparams.context_frames,
         'sequence_length': train_dataset.hparams.sequence_length,
         'repeat': train_dataset.hparams.time_shift,
-    }
+    })
     model = VideoPredictionModel(
         hparams_dict=hparams_dict,
         hparams=args.model_hparams,
