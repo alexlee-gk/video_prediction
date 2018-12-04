@@ -75,6 +75,8 @@ class BaseVideoDataset(object):
                 It is ignored (equiv. to time_shift=0) when mode != 'train'.
             force_time_shift: whether to do the shift in time regardless of
                 mode.
+            shuffle_on_val: whether to shuffle the samples regardless if mode
+                is 'train' or 'val'. Shuffle never happens when mode is 'test'.
             use_state: whether to load and return state and actions.
         """
         hparams = dict(
@@ -85,6 +87,7 @@ class BaseVideoDataset(object):
             frame_skip=0,
             time_shift=1,
             force_time_shift=False,
+            shuffle_on_val=False,
             use_state=False,
         )
         return hparams
@@ -120,12 +123,13 @@ class BaseVideoDataset(object):
 
     def make_dataset(self, batch_size):
         filenames = self.filenames
-        if self.mode == 'train':
+        shuffle = self.mode == 'train' or self.hparams.shuffle_on_val
+        if shuffle:
             random.shuffle(filenames)
 
         dataset = tf.data.TFRecordDataset(filenames, buffer_size=8 * 1024 * 1024)
         dataset = dataset.filter(self.filter)
-        if self.mode == 'train':
+        if shuffle:
             dataset = dataset.apply(tf.contrib.data.shuffle_and_repeat(buffer_size=1024, count=self.num_epochs))
         else:
             dataset = dataset.repeat(self.num_epochs)
