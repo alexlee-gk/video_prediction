@@ -9,7 +9,7 @@ from tensorflow.python.util import nest
 
 from video_prediction import ops, flow_ops
 from video_prediction.models import VideoPredictionModel
-from video_prediction.models import pix2pix_model, mocogan_model, spectral_norm_model
+from video_prediction.models import spectral_norm_model
 from video_prediction.ops import lrelu, dense, pad2d, conv2d, conv_pool2d, flatten, tile_concat, pool2d
 from video_prediction.rnn_ops import BasicConv2DLSTMCell, Conv2DGRUCell
 from video_prediction.utils import tf_utils
@@ -205,14 +205,6 @@ def prior_fn(inputs, hparams=None):
 def _discriminator_fn(targets, hparams=None):
     # TODO: do not pass inputs
     outputs = {}
-    if hparams.gan_weight or hparams.vae_gan_weight:
-        _, pix2pix_outputs = pix2pix_model.discriminator_fn(targets, inputs={}, hparams=hparams)
-        outputs.update(pix2pix_outputs)
-    if hparams.image_gan_weight or hparams.image_vae_gan_weight or \
-            hparams.video_gan_weight or hparams.video_vae_gan_weight or \
-            hparams.acvideo_gan_weight or hparams.acvideo_vae_gan_weight:
-        _, mocogan_outputs = mocogan_model.discriminator_fn(targets, inputs={}, hparams=hparams)
-        outputs.update(mocogan_outputs)
     if hparams.image_sn_gan_weight or hparams.image_sn_vae_gan_weight or \
             hparams.video_sn_gan_weight or hparams.video_sn_vae_gan_weight or \
             hparams.images_sn_gan_weight or hparams.images_sn_vae_gan_weight:
@@ -327,9 +319,6 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             raise NotImplementedError
 
         # output_size
-        gen_input_shape = list(image_shape)
-        if 'actions' in inputs:
-            gen_input_shape[-1] += inputs['actions'].shape[-1].value
         num_masks = self.hparams.last_frames * self.hparams.num_transformed_images + \
             int(bool(self.hparams.prev_image_background)) + \
             int(bool(self.hparams.first_image_background and not self.hparams.context_images_background)) + \
@@ -339,7 +328,6 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
             int(bool(self.hparams.generate_scratch_image))
         output_size = {
             'gen_images': tf.TensorShape(image_shape),
-            'gen_inputs': tf.TensorShape(gen_input_shape),
             'transformed_images': tf.TensorShape(image_shape + [num_masks]),
             'masks': tf.TensorShape([height, width, 1, num_masks]),
         }
@@ -533,10 +521,6 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                 return tf.concat(tensors, axis=axis)
         state_action = concat(state_action, axis=-1)
         state_action_z = concat(state_action_z, axis=-1)
-        if 'actions' in inputs:
-            gen_input = tile_concat([image, inputs['actions'][:, None, None, :]], axis=-1)
-        else:
-            gen_input = image
 
         layers = []
         new_conv_rnn_states = []
@@ -738,7 +722,6 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
                     gen_state = dense(state_action, inputs['states'].shape[-1].value)
 
         outputs = {'gen_images': gen_image,
-                   'gen_inputs': gen_input,
                    'transformed_images': tf.stack(transformed_images, axis=-1),
                    'masks': tf.stack(masks, axis=-1)}
         if 'pix_distribs' in inputs:

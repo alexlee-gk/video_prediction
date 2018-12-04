@@ -378,16 +378,6 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             ae_l2_weight=0.0,
             state_weight=0.0,
             tv_weight=0.0,
-            gan_weight=0.0,
-            vae_gan_weight=0.0,
-            tuple_gan_weight=0.0,
-            tuple_vae_gan_weight=0.0,
-            image_gan_weight=0.0,
-            image_vae_gan_weight=0.0,
-            video_gan_weight=0.0,
-            video_vae_gan_weight=0.0,
-            acvideo_gan_weight=0.0,
-            acvideo_vae_gan_weight=0.0,
             image_sn_gan_weight=0.0,
             image_sn_vae_gan_weight=0.0,
             images_sn_gan_weight=0.0,
@@ -760,12 +750,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             gen_tv_loss = (tf.reduce_mean(tf.reduce_sum(tf.abs(flow_diff1), axis=(-2, -1))) +
                            tf.reduce_mean(tf.reduce_sum(tf.abs(flow_diff2), axis=(-2, -1))))
             gen_losses['gen_tv_loss'] = (gen_tv_loss, hparams.tv_weight)
-        gan_weights = {'': hparams.gan_weight,
-                       '_tuple': hparams.tuple_gan_weight,
-                       '_image': hparams.image_gan_weight,
-                       '_video': hparams.video_gan_weight,
-                       '_acvideo': hparams.acvideo_gan_weight,
-                       '_image_sn': hparams.image_sn_gan_weight,
+        gan_weights = {'_image_sn': hparams.image_sn_gan_weight,
                        '_images_sn': hparams.images_sn_gan_weight,
                        '_video_sn': hparams.video_sn_gan_weight}
         for infix, gan_weight in gan_weights.items():
@@ -792,12 +777,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                     gen_gan_feature_cdist_loss = sum([vp.metrics.cosine_distance(discrim_feature_fake, discrim_feature_real)
                                                       for discrim_feature_fake, discrim_feature_real in zip(discrim_features_fake, discrim_features_real)])
                     gen_losses["gen%s_gan_feature_cdist_loss" % infix] = (gen_gan_feature_cdist_loss, hparams.gan_feature_cdist_weight)
-        vae_gan_weights = {'': hparams.vae_gan_weight,
-                           '_tuple': hparams.tuple_vae_gan_weight,
-                           '_image': hparams.image_vae_gan_weight,
-                           '_video': hparams.video_vae_gan_weight,
-                           '_acvideo': hparams.acvideo_vae_gan_weight,
-                           '_image_sn': hparams.image_sn_vae_gan_weight,
+        vae_gan_weights = {'_image_sn': hparams.image_sn_vae_gan_weight,
                            '_images_sn': hparams.images_sn_vae_gan_weight,
                            '_video_sn': hparams.video_sn_vae_gan_weight}
         for infix, vae_gan_weight in vae_gan_weights.items():
@@ -836,12 +816,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
     def discriminator_loss_fn(self, inputs, outputs):
         hparams = self.hparams
         discrim_losses = OrderedDict()
-        gan_weights = {'': hparams.gan_weight,
-                       '_tuple': hparams.tuple_gan_weight,
-                       '_image': hparams.image_gan_weight,
-                       '_video': hparams.video_gan_weight,
-                       '_acvideo': hparams.acvideo_gan_weight,
-                       '_image_sn': hparams.image_sn_gan_weight,
+        gan_weights = {'_image_sn': hparams.image_sn_gan_weight,
                        '_images_sn': hparams.images_sn_gan_weight,
                        '_video_sn': hparams.video_sn_gan_weight}
         for infix, gan_weight in gan_weights.items():
@@ -850,12 +825,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                 discrim_gan_loss_fake = vp.losses.gan_loss(outputs['discrim%s_logits_fake' % infix], 0.0, hparams.gan_loss_type)
                 discrim_gan_loss = discrim_gan_loss_real + discrim_gan_loss_fake
                 discrim_losses["discrim%s_gan_loss" % infix] = (discrim_gan_loss, gan_weight)
-        vae_gan_weights = {'': hparams.vae_gan_weight,
-                           '_tuple': hparams.tuple_vae_gan_weight,
-                           '_image': hparams.image_vae_gan_weight,
-                           '_video': hparams.video_vae_gan_weight,
-                           '_acvideo': hparams.acvideo_vae_gan_weight,
-                           '_image_sn': hparams.image_sn_vae_gan_weight,
+        vae_gan_weights = {'_image_sn': hparams.image_sn_vae_gan_weight,
                            '_images_sn': hparams.images_sn_vae_gan_weight,
                            '_video_sn': hparams.video_sn_vae_gan_weight}
         for infix, vae_gan_weight in vae_gan_weights.items():
