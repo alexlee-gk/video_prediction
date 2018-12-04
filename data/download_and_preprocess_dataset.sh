@@ -18,7 +18,7 @@ if [ $1 = "bair" ]; then
   rm ${TARGET_DIR}/${TAR_FNAME}
   mkdir -p ${TARGET_DIR}/val
   # reserve a fraction of the training set for validation
-  mv ${TARGET_DIR}/train/traj_{256_to_511,512_to_767,768_to_1023,1024_to_1279,1280_to_1535,1536_to_1791,1792_to_2047,2048_to_2303,2304_to_2559}.tfrecords ${TARGET_DIR}/val/
+  mv ${TARGET_DIR}/train/traj_256_to_511.tfrecords ${TARGET_DIR}/val/
 elif [ $1 = "kth" ]; then
   TARGET_DIR=./data/kth
   mkdir -p ${TARGET_DIR}
