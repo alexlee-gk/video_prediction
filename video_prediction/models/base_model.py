@@ -10,7 +10,6 @@ from tensorflow.contrib.training import HParams
 from tensorflow.python.util import nest
 
 import video_prediction as vp
-from video_prediction.ops import flatten
 from video_prediction.utils import tf_utils
 from video_prediction.utils.tf_utils import compute_averaged_gradients, reduce_tensors, local_device_setter, \
     replace_read_ops, print_loss_info, transpose_batch_time, add_gif_summaries, add_scalar_summaries, \
@@ -805,12 +804,9 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                                                           for discrim_feature_enc_fake, discrim_feature_enc_real in zip(discrim_features_enc_fake, discrim_features_enc_real)])
                     gen_losses["gen%s_vae_gan_feature_cdist_loss" % infix] = (gen_vae_gan_feature_cdist_loss, hparams.gan_feature_cdist_weight)
         if hparams.kl_weight:
-            gen_kl_loss = vp.losses.kl_loss(outputs['enc_zs_mu'], outputs['enc_zs_log_sigma_sq'],
-                                            outputs.get('prior_zs_mu'), outputs.get('prior_zs_log_sigma_sq'))
+            gen_kl_loss = vp.losses.kl_loss(outputs['zs_mu_enc'], outputs['zs_log_sigma_sq_enc'],
+                                            outputs.get('zs_mu_prior'), outputs.get('zs_log_sigma_sq_prior'))
             gen_losses["gen_kl_loss"] = (gen_kl_loss, self.kl_weight)  # possibly annealed kl_weight
-        if hparams.z_l1_weight:
-            gen_z_l1_loss = vp.losses.l1_loss(outputs['gen_enc_zs_mu'], outputs['gen_zs_random'])
-            gen_losses["gen_z_l1_loss"] = (gen_z_l1_loss, hparams.z_l1_weight)
         return gen_losses
 
     def discriminator_loss_fn(self, inputs, outputs):

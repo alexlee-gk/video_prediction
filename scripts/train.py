@@ -50,8 +50,8 @@ def main():
 
     parser.add_argument("--summary_freq", type=int, default=1000, help="save frequency of summaries (except for image and eval summaries) for train/validation set")
     parser.add_argument("--image_summary_freq", type=int, default=5000, help="save frequency of image summaries for train/validation set")
-    parser.add_argument("--eval_summary_freq", type=int, default=None, help="save frequency of eval summaries for train/validation set. default: at the end of training")
-    parser.add_argument("--accum_eval_summary_freq", type=int, default=None, help="save frequency of accumulated eval summaries for validation set only. default: at the end of training")
+    parser.add_argument("--eval_summary_freq", type=int, default=100000, help="save frequency of eval summaries for train/validation set. default: at the end of training")
+    parser.add_argument("--accum_eval_summary_freq", type=int, default=100000, help="save frequency of accumulated eval summaries for validation set only. default: at the end of training")
     parser.add_argument("--accum_eval_summary_num_samples", type=int, default=256, help="the number of samples (rounded based on the batch size) for the accumulated eval summaries")
     parser.add_argument("--progress_freq", type=int, default=100, help="display progress every progress_freq steps")
     parser.add_argument("--save_freq", type=int, default=5000, help="save frequence of model, 0 to disable")

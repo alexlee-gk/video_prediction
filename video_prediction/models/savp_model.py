@@ -9,8 +9,8 @@ from tensorflow.python.util import nest
 
 from video_prediction import ops, flow_ops
 from video_prediction.models import VideoPredictionModel
-from video_prediction.models import spectral_norm_model
-from video_prediction.ops import lrelu, dense, pad2d, conv2d, conv_pool2d, flatten, tile_concat, pool2d
+from video_prediction.models import networks
+from video_prediction.ops import dense, pad2d, conv2d, flatten, tile_concat
 from video_prediction.rnn_ops import BasicConv2DLSTMCell, Conv2DGRUCell
 from video_prediction.utils import tf_utils
 
@@ -18,198 +18,111 @@ from video_prediction.utils import tf_utils
 RELU_SHIFT = 1e-12
 
 
-def create_legacy_encoder(inputs,
-                          nz=8,
-                          nef=64,
-                          norm_layer='instance',
-                          include_top=True):
-    norm_layer = ops.get_norm_layer(norm_layer)
-
-    with tf.variable_scope('h1'):
-        h1 = conv_pool2d(inputs, nef, kernel_size=5, strides=2)
-        h1 = norm_layer(h1)
-        h1 = tf.nn.relu(h1)
-
-    with tf.variable_scope('h2'):
-        h2 = conv_pool2d(h1, nef * 2, kernel_size=5, strides=2)
-        h2 = norm_layer(h2)
-        h2 = tf.nn.relu(h2)
-
-    with tf.variable_scope('h3'):
-        h3 = conv_pool2d(h2, nef * 4, kernel_size=5, strides=2)
-        h3 = norm_layer(h3)
-        h3 = tf.nn.relu(h3)
-        h3_flatten = flatten(h3)
-
-    if include_top:
-        with tf.variable_scope('z_mu'):
-            z_mu = dense(h3_flatten, nz)
-        with tf.variable_scope('z_log_sigma_sq'):
-            z_log_sigma_sq = dense(h3_flatten, nz)
-            z_log_sigma_sq = tf.clip_by_value(z_log_sigma_sq, -10, 10)
-        outputs = {'enc_zs_mu': z_mu, 'enc_zs_log_sigma_sq': z_log_sigma_sq}
-    else:
-        outputs = h3_flatten
-    return outputs
-
-
-def create_n_layer_encoder(inputs,
-                           nz=8,
-                           nef=64,
-                           n_layers=3,
-                           norm_layer='instance',
-                           include_top=True):
-    norm_layer = ops.get_norm_layer(norm_layer)
-    layers = []
-    paddings = [[0, 0], [1, 1], [1, 1], [0, 0]]
-
-    with tf.variable_scope("layer_1"):
-        convolved = conv2d(tf.pad(inputs, paddings), nef, kernel_size=4, strides=2, padding='VALID')
-        rectified = lrelu(convolved, 0.2)
-        layers.append(rectified)
-
-    for i in range(1, n_layers):
-        with tf.variable_scope("layer_%d" % (len(layers) + 1)):
-            out_channels = nef * min(2**i, 4)
-            convolved = conv2d(tf.pad(layers[-1], paddings), out_channels, kernel_size=4, strides=2, padding='VALID')
-            normalized = norm_layer(convolved)
-            rectified = lrelu(normalized, 0.2)
-            layers.append(rectified)
-
-    pooled = pool2d(rectified, rectified.shape[1:3].as_list(), padding='VALID', pool_mode='avg')
-    squeezed = tf.squeeze(pooled, [1, 2])
-
-    if include_top:
-        with tf.variable_scope('z_mu'):
-            z_mu = dense(squeezed, nz)
-        with tf.variable_scope('z_log_sigma_sq'):
-            z_log_sigma_sq = dense(squeezed, nz)
-            z_log_sigma_sq = tf.clip_by_value(z_log_sigma_sq, -10, 10)
-        outputs = {'enc_zs_mu': z_mu, 'enc_zs_log_sigma_sq': z_log_sigma_sq}
-    else:
-        outputs = squeezed
-    return outputs
-
-
-def create_encoder(inputs, e_net='legacy', use_e_rnn=False, rnn='lstm', **kwargs):
-    assert inputs.shape.ndims == 5
-    batch_shape = inputs.shape[:-3].as_list()
-    inputs = flatten(inputs, 0, len(batch_shape) - 1)
-    unflatten = lambda x: tf.reshape(x, batch_shape + x.shape.as_list()[1:])
-
-    if use_e_rnn:
-        if e_net == 'legacy':
-            kwargs.pop('n_layers', None)  # unused
-            h = create_legacy_encoder(inputs, include_top=False, **kwargs)
-            with tf.variable_scope('h4'):
-                h = dense(h, kwargs['nef'] * 4)
-        elif e_net == 'n_layer':
-            h = create_n_layer_encoder(inputs, include_top=False, **kwargs)
-            with tf.variable_scope('layer_%d' % (kwargs['n_layers'] + 1)):
-                h = dense(h, kwargs['nef'] * 4)
-        else:
-            raise ValueError('Invalid encoder net %s' % e_net)
-
-        if rnn == 'lstm':
-            RNNCell = tf.contrib.rnn.BasicLSTMCell
-        elif rnn == 'gru':
-            RNNCell = tf.contrib.rnn.GRUCell
-        else:
-            raise NotImplementedError
-
-        h = nest.map_structure(unflatten, h)
-        with tf.variable_scope('%s' % rnn):
-            rnn_cell = RNNCell(kwargs['nef'] * 4)
-            h, _ = tf_utils.unroll_rnn(rnn_cell, h)
-        h = flatten(h, 0, len(batch_shape) - 1)
-
-        with tf.variable_scope('z_mu'):
-            z_mu = dense(h, kwargs['nz'])
-        with tf.variable_scope('z_log_sigma_sq'):
-            z_log_sigma_sq = dense(h, kwargs['nz'])
-            z_log_sigma_sq = tf.clip_by_value(z_log_sigma_sq, -10, 10)
-        outputs = {'enc_zs_mu': z_mu, 'enc_zs_log_sigma_sq': z_log_sigma_sq}
-    else:
-        if e_net == 'legacy':
-            kwargs.pop('n_layers', None)  # unused
-            outputs = create_legacy_encoder(inputs, include_top=True, **kwargs)
-        elif e_net == 'n_layer':
-            outputs = create_n_layer_encoder(inputs, include_top=True, **kwargs)
-        else:
-            raise ValueError('Invalid encoder net %s' % e_net)
-
-    outputs = nest.map_structure(unflatten, outputs)
-    return outputs
-
-
-def create_prior(batch_shape, rnn='lstm', **kwargs):
-    unflatten = lambda x: tf.reshape(x, batch_shape + x.shape.as_list()[1:])
-
-    with tf.variable_scope('input'):
-        h = tf.get_variable('input', kwargs['nef'] * 4,
-                            dtype=tf.float32, initializer=tf.zeros_initializer())
-    h = tf.tile(h[None, None], list(batch_shape) + [1])
-
-    if rnn == 'lstm':
-        RNNCell = functools.partial(tf.nn.rnn_cell.LSTMCell, name='basic_lstm_cell')
-    elif rnn == 'gru':
-        RNNCell = tf.contrib.rnn.GRUCell
-    else:
-        raise NotImplementedError
-
-    with tf.variable_scope('%s' % rnn):
-        rnn_cell = RNNCell(kwargs['nef'] * 4)
-        h, _ = tf_utils.unroll_rnn(rnn_cell, h)
-    h = flatten(h, 0, 1)
-
-    with tf.variable_scope('z_mu'):
-        z_mu = dense(h, kwargs['nz'])
-    with tf.variable_scope('z_log_sigma_sq'):
-        z_log_sigma_sq = dense(h, kwargs['nz'])
-        z_log_sigma_sq = tf.clip_by_value(z_log_sigma_sq, -10, 10)
-    outputs = {'prior_zs_mu': z_mu, 'prior_zs_log_sigma_sq': z_log_sigma_sq}
-
-    outputs = nest.map_structure(unflatten, outputs)
-    return outputs
-
-
-def encoder_fn(inputs, hparams=None):
+def posterior_fn(inputs, hparams):
     images = inputs['images']
-    sequence_length = tf.minimum(hparams.sequence_length, tf.shape(images)[0])
-    image_pairs = tf.concat([images[:sequence_length - 1],
-                             images[1:sequence_length]], axis=-1)
+    image_pairs = tf.concat([images[:-1], images[1:]], axis=-1)
     if 'actions' in inputs:
         image_pairs = tile_concat(
             [image_pairs, inputs['actions'][..., None, None, :]], axis=-1)
-    outputs = create_encoder(image_pairs,
-                             e_net=hparams.e_net,
-                             use_e_rnn=hparams.use_e_rnn,
-                             rnn=hparams.rnn,
-                             nz=hparams.nz,
-                             nef=hparams.nef,
-                             n_layers=hparams.n_layers,
-                             norm_layer=hparams.norm_layer)
+
+    h = tf_utils.with_flat_batch(networks.encoder)(
+        image_pairs, nef=hparams.nef, n_layers=hparams.n_layers, norm_layer=hparams.norm_layer)
+
+    if hparams.use_e_rnn:
+        with tf.variable_scope('layer_%d' % (hparams.n_layers + 1)):
+            h = tf_utils.with_flat_batch(dense, 2)(h, hparams.nef * 4)
+
+        if hparams.rnn == 'lstm':
+            RNNCell = tf.contrib.rnn.BasicLSTMCell
+        elif hparams.rnn == 'gru':
+            RNNCell = tf.contrib.rnn.GRUCell
+        else:
+            raise NotImplementedError
+        with tf.variable_scope('%s' % hparams.rnn):
+            rnn_cell = RNNCell(hparams.nef * 4)
+            h, _ = tf_utils.unroll_rnn(rnn_cell, h)
+
+    with tf.variable_scope('z_mu'):
+        z_mu = tf_utils.with_flat_batch(dense, 2)(h, hparams.nz)
+    with tf.variable_scope('z_log_sigma_sq'):
+        z_log_sigma_sq = tf_utils.with_flat_batch(dense, 2)(h, hparams.nz)
+        z_log_sigma_sq = tf.clip_by_value(z_log_sigma_sq, -10, 10)
+    outputs = {'zs_mu': z_mu, 'zs_log_sigma_sq': z_log_sigma_sq}
     return outputs
 
 
-def prior_fn(inputs, hparams=None):
+def prior_fn(inputs, hparams):
     images = inputs['images']
-    batch_shape = images[:hparams.sequence_length - 1].shape[:-3].as_list()
-    outputs = create_prior(batch_shape,
-                           rnn=hparams.rnn,
-                           nz=hparams.nz,
-                           nef=hparams.nef)
+    image_pairs = tf.concat([images[:hparams.context_frames - 1], images[1:hparams.context_frames]], axis=-1)
+    if 'actions' in inputs:
+        image_pairs = tile_concat(
+            [image_pairs, inputs['actions'][..., None, None, :]], axis=-1)
+
+    h = tf_utils.with_flat_batch(networks.encoder)(
+        image_pairs, nef=hparams.nef, n_layers=hparams.n_layers, norm_layer=hparams.norm_layer)
+    h_zeros = tf.zeros(tf.concat([[hparams.sequence_length - hparams.context_frames], tf.shape(h)[1:]], axis=0))
+    h = tf.concat([h, h_zeros], axis=0)
+
+    with tf.variable_scope('layer_%d' % (hparams.n_layers + 1)):
+        h = tf_utils.with_flat_batch(dense, 2)(h, hparams.nef * 4)
+
+    if hparams.rnn == 'lstm':
+        RNNCell = tf.contrib.rnn.BasicLSTMCell
+    elif hparams.rnn == 'gru':
+        RNNCell = tf.contrib.rnn.GRUCell
+    else:
+        raise NotImplementedError
+    with tf.variable_scope('%s' % hparams.rnn):
+        rnn_cell = RNNCell(hparams.nef * 4)
+        h, _ = tf_utils.unroll_rnn(rnn_cell, h)
+
+    with tf.variable_scope('z_mu'):
+        z_mu = tf_utils.with_flat_batch(dense, 2)(h, hparams.nz)
+    with tf.variable_scope('z_log_sigma_sq'):
+        z_log_sigma_sq = tf_utils.with_flat_batch(dense, 2)(h, hparams.nz)
+        z_log_sigma_sq = tf.clip_by_value(z_log_sigma_sq, -10, 10)
+    outputs = {'zs_mu': z_mu, 'zs_log_sigma_sq': z_log_sigma_sq}
     return outputs
 
 
-def _discriminator_fn(targets, hparams=None):
-    # TODO: do not pass inputs
+def discriminator_given_video_fn(targets, hparams):
+    sequence_length, batch_size = targets.shape.as_list()[:2]
+    clip_length = hparams.clip_length
+
+    # sample an image and apply the image distriminator on that frame
+    t_sample = tf.random_uniform([batch_size], minval=0, maxval=sequence_length, dtype=tf.int32)
+    image_sample = tf.gather_nd(targets, tf.stack([t_sample, tf.range(batch_size)], axis=1))
+
+    # sample a subsequence of length clip_length and apply the images/video discriminators on those frames
+    t_start = tf.random_uniform([batch_size], minval=0, maxval=sequence_length - clip_length + 1, dtype=tf.int32)
+    t_start_indices = tf.stack([t_start, tf.range(batch_size)], axis=1)
+    t_offset_indices = tf.stack([tf.range(clip_length), tf.zeros(clip_length, dtype=tf.int32)], axis=1)
+    indices = t_start_indices[None] + t_offset_indices[:, None]
+    clip_sample = tf.gather_nd(targets, flatten(indices, 0, 1))
+    clip_sample = tf.reshape(clip_sample, [clip_length] + targets.shape.as_list()[1:])
+
     outputs = {}
-    if hparams.image_sn_gan_weight or hparams.image_sn_vae_gan_weight or \
-            hparams.video_sn_gan_weight or hparams.video_sn_vae_gan_weight or \
-            hparams.images_sn_gan_weight or hparams.images_sn_vae_gan_weight:
-        _, spectral_norm_outputs = spectral_norm_model.discriminator_fn(targets, inputs={}, hparams=hparams)
-        outputs.update(spectral_norm_outputs)
+    if hparams.image_sn_gan_weight or hparams.image_sn_vae_gan_weight:
+        with tf.variable_scope('image'):
+            image_features = networks.image_sn_discriminator(image_sample, ndf=hparams.ndf)
+            image_features, image_logits = image_features[:-1], image_features[-1]
+            outputs['discrim_image_sn_logits'] = image_logits
+            for i, image_feature in enumerate(image_features):
+                outputs['discrim_image_sn_feature%d' % i] = image_feature
+    if hparams.video_sn_gan_weight or hparams.video_sn_vae_gan_weight:
+        with tf.variable_scope('video'):
+            video_features = networks.video_sn_discriminator(clip_sample, ndf=hparams.ndf)
+            video_features, video_logits = video_features[:-1], video_features[-1]
+            outputs['discrim_video_sn_logits'] = video_logits
+            for i, video_feature in enumerate(video_features):
+                outputs['discrim_video_sn_feature%d' % i] = video_feature
+    if hparams.images_sn_gan_weight or hparams.images_sn_vae_gan_weight:
+        with tf.variable_scope('images'):
+            images_features = tf_utils.with_flat_batch(networks.image_sn_discriminator)(clip_sample, ndf=hparams.ndf)
+            images_features, images_logits = images_features[:-1], images_features[-1]
+            outputs['discrim_images_sn_logits'] = images_logits
+            for i, images_feature in enumerate(images_features):
+                outputs['discrim_images_sn_feature%d' % i] = images_feature
     return outputs
 
 
@@ -223,23 +136,23 @@ def discriminator_fn(inputs, outputs, mode, hparams):
         images_enc_fake = outputs['gen_images_enc']
         if hparams.use_same_discriminator:
             with tf.name_scope("real"):
-                discrim_outputs_enc_real = _discriminator_fn(images_enc_real, hparams)
+                discrim_outputs_enc_real = discriminator_given_video_fn(images_enc_real, hparams)
             tf.get_variable_scope().reuse_variables()
             with tf.name_scope("fake"):
-                discrim_outputs_enc_fake = _discriminator_fn(images_enc_fake, hparams)
+                discrim_outputs_enc_fake = discriminator_given_video_fn(images_enc_fake, hparams)
         else:
             with tf.variable_scope('encoder'), tf.name_scope("real"):
-                discrim_outputs_enc_real = _discriminator_fn(images_enc_real, hparams)
+                discrim_outputs_enc_real = discriminator_given_video_fn(images_enc_real, hparams)
             with tf.variable_scope('encoder', reuse=True), tf.name_scope("fake"):
-                discrim_outputs_enc_fake = _discriminator_fn(images_enc_fake, hparams)
+                discrim_outputs_enc_fake = discriminator_given_video_fn(images_enc_fake, hparams)
 
     images_real = inputs['images'][1:]
     images_fake = outputs['gen_images']
     with tf.name_scope("real"):
-        discrim_outputs_real = _discriminator_fn(images_real, hparams)
+        discrim_outputs_real = discriminator_given_video_fn(images_real, hparams)
     tf.get_variable_scope().reuse_variables()
     with tf.name_scope("fake"):
-        discrim_outputs_fake = _discriminator_fn(images_fake, hparams)
+        discrim_outputs_fake = discriminator_given_video_fn(images_fake, hparams)
 
     discrim_outputs_real = OrderedDict([(k + '_real', v) for k, v in discrim_outputs_real.items()])
     discrim_outputs_fake = OrderedDict([(k + '_fake', v) for k, v in discrim_outputs_fake.items()])
@@ -253,9 +166,9 @@ def discriminator_fn(inputs, outputs, mode, hparams):
     return outputs
 
 
-class DNACell(tf.nn.rnn_cell.RNNCell):
+class SAVPCell(tf.nn.rnn_cell.RNNCell):
     def __init__(self, inputs, mode, hparams, reuse=None):
-        super(DNACell, self).__init__(_reuse=reuse)
+        super(SAVPCell, self).__init__(_reuse=reuse)
         self.inputs = inputs
         self.mode = mode
         self.hparams = hparams
@@ -424,7 +337,7 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         return self._state_size
 
     def zero_state(self, batch_size, dtype):
-        init_state = super(DNACell, self).zero_state(batch_size, dtype)
+        init_state = super(SAVPCell, self).zero_state(batch_size, dtype)
         learnable_init_state = nest.map_structure(
             lambda x: tf.tile(x[None], [batch_size] + [1] * x.shape.ndims), self._learnable_initial_state)
         init_state.update(learnable_init_state)
@@ -750,81 +663,85 @@ class DNACell(tf.nn.rnn_cell.RNNCell):
         return outputs, new_states
 
 
-def _generator_fn(inputs, outputs_enc, mode, hparams, use_posterior=False):
-    batch_size = inputs['images'].shape[1].value
+def generator_given_z_fn(inputs, mode, hparams):
+    # all the inputs needs to have the same length for unrolling the rnn
     inputs = {name: tf_utils.maybe_pad_or_slice(input, hparams.sequence_length - 1)
               for name, input in inputs.items()}
-    if hparams.nz:
-        if not use_posterior and hparams.learn_prior:
-            prior = prior_fn(inputs, hparams)
-
-        def sample_zs():
-            if not use_posterior:
-                if hparams.learn_prior:
-                    prior_zs_mu = prior['prior_zs_mu']
-                    prior_zs_log_sigma_sq = prior['prior_zs_log_sigma_sq']
-                    eps = tf.random_normal([hparams.sequence_length - 1, batch_size, hparams.nz], 0, 1)
-                    zs = prior_zs_mu + tf.sqrt(tf.exp(prior_zs_log_sigma_sq)) * eps
-                else:
-                    zs = tf.random_normal([hparams.sequence_length - 1, batch_size, hparams.nz], 0, 1)
-
-                if outputs_enc:
-                    enc_zs_mu = outputs_enc['enc_zs_mu'][:hparams.context_frames - 1]
-                    enc_zs_log_sigma_sq = outputs_enc['enc_zs_log_sigma_sq'][:hparams.context_frames - 1]
-                    enc_eps = tf.random_normal([hparams.context_frames - 1, batch_size, hparams.nz], 0, 1)
-                    enc_zs = enc_zs_mu + tf.sqrt(tf.exp(enc_zs_log_sigma_sq)) * enc_eps
-                    zs = tf.concat([enc_zs, zs[hparams.context_frames - 1:]], axis=0)
-            else:
-                enc_zs_mu = outputs_enc['enc_zs_mu']
-                enc_zs_log_sigma_sq = outputs_enc['enc_zs_log_sigma_sq']
-                eps = tf.random_normal([hparams.sequence_length - 1, batch_size, hparams.nz], 0, 1)
-                zs = enc_zs_mu + tf.sqrt(tf.exp(enc_zs_log_sigma_sq)) * eps
-            return zs
-        inputs['zs'] = sample_zs()
-    else:
-        if outputs_enc:
-            raise ValueError('outputs_enc has to be None when nz is 0.')
-    cell = DNACell(inputs, mode, hparams)
-
+    cell = SAVPCell(inputs, mode, hparams)
     outputs, _ = tf_utils.unroll_rnn(cell, inputs)
-    if hparams.nz:
-        inputs_samples = {name: flatten(tf.tile(input[:, None], [1, hparams.num_samples] + [1] * (input.shape.ndims - 1)), 1, 2)
-                          for name, input in inputs.items() if name != 'zs'}
-        inputs_samples['zs'] = tf.concat([sample_zs() for _ in range(hparams.num_samples)], axis=1)
-        with tf.variable_scope(tf.get_variable_scope(), reuse=True):
-            cell_samples = DNACell(inputs_samples, mode, hparams)
-            outputs_samples, _ = tf_utils.unroll_rnn(cell_samples, inputs_samples)
-        gen_images_samples = outputs_samples['gen_images']
-        gen_images_samples = tf.stack(tf.split(gen_images_samples, hparams.num_samples, axis=1), axis=-1)
-        gen_images_samples_avg = tf.reduce_mean(gen_images_samples, axis=-1)
-        outputs['gen_images_samples'] = gen_images_samples
-        outputs['gen_images_samples_avg'] = gen_images_samples_avg
     outputs['ground_truth_sampling_mean'] = tf.reduce_mean(tf.to_float(cell.ground_truth[hparams.context_frames:]))
-    if hparams.nz and not use_posterior and hparams.learn_prior:
-        outputs.update(prior)
     return outputs
 
 
 def generator_fn(inputs, mode, hparams):
+    batch_size = tf.shape(inputs['images'])[1]
+
     if hparams.nz == 0:
-        outputs_enc = {}
+        # no zs is given in inputs
+        outputs = generator_given_z_fn(inputs, mode, hparams)
     else:
+        zs_shape = [hparams.sequence_length - 1, batch_size, hparams.nz]
+
+        # posterior
         with tf.variable_scope('encoder'):
-            outputs_enc = encoder_fn(inputs, hparams)
+            outputs_posterior = posterior_fn(inputs, hparams)
+            eps = tf.random_normal(zs_shape, 0, 1)
+            zs_posterior = outputs_posterior['zs_mu'] + tf.sqrt(tf.exp(outputs_posterior['zs_log_sigma_sq'])) * eps
+        inputs_posterior = dict(inputs)
+        inputs_posterior['zs'] = zs_posterior
 
-    gen_outputs = _generator_fn(inputs, outputs_enc, mode, hparams)
+        # prior
+        if hparams.learn_prior:
+            with tf.variable_scope('prior'):
+                outputs_prior = prior_fn(inputs, hparams)
+            eps = tf.random_normal(zs_shape, 0, 1)
+            zs_prior = outputs_prior['zs_mu'] + tf.sqrt(tf.exp(outputs_prior['zs_log_sigma_sq'])) * eps
+        else:
+            outputs_prior = {}
+            zs_prior = tf.random_normal([hparams.sequence_length - hparams.context_frames] + zs_shape[1:], 0, 1)
+            zs_prior = tf.concat([zs_posterior[:hparams.context_frames - 1], zs_prior], axis=0)
+        inputs_prior = dict(inputs)
+        inputs_prior['zs'] = zs_prior
 
-    if hparams.nz == 0:
-        gen_outputs_enc = {}
-    else:
+        # generate
+        gen_outputs_posterior = generator_given_z_fn(inputs_posterior, mode, hparams)
         tf.get_variable_scope().reuse_variables()
-        gen_outputs_enc = _generator_fn(inputs, outputs_enc, mode, hparams, use_posterior=True)
-        gen_outputs_enc = collections.OrderedDict([(k + '_enc', v) for k, v in gen_outputs_enc.items()])
+        gen_outputs = generator_given_z_fn(inputs_prior, mode, hparams)
 
-    outputs = [gen_outputs, outputs_enc, gen_outputs_enc]
-    total_num_outputs = sum([len(output) for output in outputs])
-    outputs = collections.OrderedDict(itertools.chain(*[output.items() for output in outputs]))
-    assert len(outputs) == total_num_outputs  # ensure no output is lost because of repeated keys
+        # rename tensors to avoid name collisions
+        output_prior = collections.OrderedDict([(k + '_prior', v) for k, v in outputs_prior.items()])
+        outputs_posterior = collections.OrderedDict([(k + '_enc', v) for k, v in outputs_posterior.items()])
+        gen_outputs_posterior = collections.OrderedDict([(k + '_enc', v) for k, v in gen_outputs_posterior.items()])
+
+        outputs = [output_prior, gen_outputs, outputs_posterior, gen_outputs_posterior]
+        total_num_outputs = sum([len(output) for output in outputs])
+        outputs = collections.OrderedDict(itertools.chain(*[output.items() for output in outputs]))
+        assert len(outputs) == total_num_outputs  # ensure no output is lost because of repeated keys
+
+        # generate multiple samples from the prior for visualization purposes
+        inputs_samples = {
+            name: tf.tile(input[:, None], [1, hparams.num_samples] + [1] * (input.shape.ndims - 1))
+            for name, input in inputs.items()}
+        zs_samples_shape = [hparams.sequence_length - 1, hparams.num_samples, batch_size, hparams.nz]
+        if hparams.learn_prior:
+            eps = tf.random_normal(zs_samples_shape, 0, 1)
+            zs_prior_samples = (outputs_prior['zs_mu'][:, None] +
+                                tf.sqrt(tf.exp(outputs_prior['zs_log_sigma_sq']))[:, None] * eps)
+        else:
+            zs_prior_samples = tf.random_normal(
+                [hparams.sequence_length - hparams.context_frames] + zs_samples_shape[1:], 0, 1)
+            zs_prior_samples = tf.concat(
+                [tf.tile(zs_posterior[:hparams.context_frames - 1][:, None], [1, hparams.num_samples, 1, 1]),
+                 zs_prior_samples], axis=0)
+        inputs_prior_samples = dict(inputs_samples)
+        inputs_prior_samples['zs'] = zs_prior_samples
+        inputs_prior_samples = {name: flatten(input, 1, 2) for name, input in inputs_prior_samples.items()}
+        gen_outputs_samples = generator_given_z_fn(inputs_prior_samples, mode, hparams)
+        gen_images_samples = gen_outputs_samples['gen_images']
+        gen_images_samples = tf.stack(tf.split(gen_images_samples, hparams.num_samples, axis=1), axis=-1)
+        gen_images_samples_avg = tf.reduce_mean(gen_images_samples, axis=-1)
+        outputs['gen_images_samples'] = gen_images_samples
+        outputs['gen_images_samples_avg'] = gen_images_samples_avg
     return outputs
 
 
@@ -832,7 +749,7 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
     def __init__(self, *args, **kwargs):
         super(SAVPVideoPredictionModel, self).__init__(
             generator_fn, discriminator_fn, *args, **kwargs)
-        if self.hparams.d_net == 'none' or self.mode != 'train':
+        if self.mode != 'train':
             self.discriminator_fn = None
         self.deterministic = not self.hparams.nz
 
@@ -841,13 +758,9 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
         hparams = dict(
             l1_weight=1.0,
             l2_weight=0.0,
-            d_net='legacy',
             n_layers=3,
             ndf=32,
             norm_layer='instance',
-            d_downsample_layer='conv_pool2d',
-            d_conditional=True,
-            d_use_gt_inputs=True,
             use_same_discriminator=False,
             ngf=32,
             downsample_layer='conv_pool2d',
@@ -873,7 +786,6 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
             schedule_sampling='inverse_sigmoid',
             schedule_sampling_k=900.0,
             schedule_sampling_steps=(0, 100000),
-            e_net='n_layer',
             use_e_rnn=False,
             learn_prior=False,
             nz=8,

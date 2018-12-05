@@ -108,6 +108,19 @@ def print_loss_info(losses, *tensors):
             print('    %s' % descendant_name)
 
 
+def with_flat_batch(flat_batch_fn, ndims=4):
+    def fn(x, *args, **kwargs):
+        shape = tf.shape(x)
+        flat_batch_shape = tf.concat([[-1], shape[-(ndims-1):]], axis=0)
+        flat_batch_shape.set_shape([ndims])
+        flat_batch_x = tf.reshape(x, flat_batch_shape)
+        flat_batch_r = flat_batch_fn(flat_batch_x, *args, **kwargs)
+        r = nest.map_structure(lambda x: tf.reshape(x, tf.concat([shape[:-(ndims-1)], tf.shape(x)[1:]], axis=0)),
+                               flat_batch_r)
+        return r
+    return fn
+
+
 def transpose_batch_time(x):
     if isinstance(x, tf.Tensor) and x.shape.ndims >= 2:
         return tf.transpose(x, [1, 0] + list(range(2, x.shape.ndims)))
@@ -246,7 +259,7 @@ def add_summaries(outputs, collections=None):
             scalar_outputs[name] = output
         elif output.shape.ndims == 4:
             image_outputs[name] = output
-        elif output.shape.ndims > 4 and output.shape[4].value in (1, 3):
+        elif output.shape.ndims > 4 and output.shape[-1].value in (1, 3):
             gif_outputs[name] = output
     add_scalar_summaries(scalar_outputs, collections=collections)
     add_image_summaries(image_outputs, collections=collections)
