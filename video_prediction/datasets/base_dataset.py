@@ -68,6 +68,8 @@ class BaseVideoDataset(object):
                 state-like sequences are of length sequence_length and
                 action-like sequences are of length sequence_length - 1.
                 This number includes the context frames.
+            long_sequence_length: the number of frames for the long version.
+                The default is the same as sequence_length.
             frame_skip: number of frames to skip in between outputted frames,
                 so frame_skip=0 denotes no skipping.
             time_shift: shift in time by multiples of this, so time_shift=1
@@ -84,6 +86,7 @@ class BaseVideoDataset(object):
             scale_size=0,
             context_frames=1,
             sequence_length=0,
+            long_sequence_length=0,
             frame_skip=0,
             time_shift=1,
             force_time_shift=False,
@@ -102,6 +105,8 @@ class BaseVideoDataset(object):
                 hparams = [hparams]
             for hparam in hparams:
                 parsed_hparams.parse(hparam)
+        if parsed_hparams.long_sequence_length == 0:
+            parsed_hparams.long_sequence_length = parsed_hparams.sequence_length
         return parsed_hparams
 
     @property

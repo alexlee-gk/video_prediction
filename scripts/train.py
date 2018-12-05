@@ -135,6 +135,16 @@ def main():
         mode='val',
         hparams_dict=dataset_hparams_dict,
         hparams=args.dataset_hparams)
+    if val_dataset.hparams.long_sequence_length != val_dataset.hparams.sequence_length:
+        # the longer dataset is only used for the accum_eval_metrics
+        long_val_dataset = VideoDataset(
+            args.val_input_dir or args.input_dir,
+            mode='val',
+            hparams_dict=dataset_hparams_dict,
+            hparams=args.dataset_hparams)
+        long_val_dataset.set_sequence_length(val_dataset.hparams.long_sequence_length)
+    else:
+        long_val_dataset = None
 
     variable_scope = tf.get_variable_scope()
     variable_scope.set_use_resource(True)
@@ -164,6 +174,18 @@ def main():
 
     # inputs comes from the training dataset by default, unless train_handle is remapped to the val_handles
     model.build_graph(inputs)
+
+    if long_val_dataset is not None:
+        # separately build a model for the longer sequence.
+        # this is needed because the model doesn't support dynamic shapes.
+        long_hparams_dict = dict(hparams_dict)
+        long_hparams_dict['sequence_length'] = val_dataset.hparams.long_sequence_length
+        long_model = VideoPredictionModel(
+            hparams_dict=long_hparams_dict,
+            hparams=args.model_hparams,
+            aggregate_nccl=args.aggregate_nccl)
+        tf.get_variable_scope().reuse_variables()
+        long_model.build_graph(long_val_dataset.make_batch(batch_size))
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
@@ -268,16 +290,20 @@ def main():
                 print("done")
             if should(args.accum_eval_summary_freq) and (step >= 0 or (step + 1) == (max_steps - start_step)):
                 # never evaluate this at the beginning since it's expensive, unless it's the last iteration
-                sess.run(model.accum_eval_metrics_reset_op)
-                accum_eval_summary_num_updates = args.accum_eval_summary_num_samples // batch_size
-                val_fetches = {"global_step": global_step, "accum_eval_summary": model.accum_eval_summary_op}
-                for update_step in range(accum_eval_summary_num_updates):
-                    print('evaluating %d / %d' % (update_step + 1, accum_eval_summary_num_updates))
-                    val_results = sess.run(val_fetches, feed_dict={train_handle: val_handle_eval})
-                accum_eval_summary = add_tag_suffix(val_results["accum_eval_summary"], '_1')
-                print("recording accum eval summary")
-                summary_writer.add_summary(accum_eval_summary, val_results["global_step"])
-                print("done")
+                val_models = [model]
+                if long_val_dataset is not None:
+                    val_models.append(long_model)
+                for i, val_model in enumerate(val_models):
+                    sess.run(val_model.accum_eval_metrics_reset_op)
+                    accum_eval_summary_num_updates = args.accum_eval_summary_num_samples // batch_size
+                    val_fetches = {"global_step": global_step, "accum_eval_summary": val_model.accum_eval_summary_op}
+                    for update_step in range(accum_eval_summary_num_updates):
+                        print('evaluating %d / %d' % (update_step + 1, accum_eval_summary_num_updates))
+                        val_results = sess.run(val_fetches, feed_dict={train_handle: val_handle_eval})
+                    accum_eval_summary = add_tag_suffix(val_results["accum_eval_summary"], '_%d' % (i + 1))
+                    print("recording accum eval summary")
+                    summary_writer.add_summary(accum_eval_summary, val_results["global_step"])
+                    print("done")
             if (should(args.summary_freq) or should(args.image_summary_freq) or
                     should(args.eval_summary_freq) or should(args.accum_eval_summary_freq)):
                 summary_writer.flush()

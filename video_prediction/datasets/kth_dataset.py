@@ -23,6 +23,7 @@ class KTHVideoDataset(VarLenFeatureVideoDataset):
         hparams = dict(
             context_frames=10,
             sequence_length=20,
+            long_sequence_length=40,
             force_time_shift=True,
             shuffle_on_val=True,
             use_state=False,
