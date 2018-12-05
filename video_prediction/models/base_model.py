@@ -223,9 +223,7 @@ class BaseVideoPredictionModel(object):
             eval_metrics['eval_diversity'] = eval_outputs_and_metrics['eval_diversity'] / float(num_samples_for_diversity)
         return eval_outputs, eval_metrics
 
-    def restore(self, sess, checkpoints):
-        # vgg_network.vgg_assign_from_values_fn()(sess)
-
+    def restore(self, sess, checkpoints, restore_to_checkpoint_mapping=None):
         if checkpoints:
             var_list = self.saveable_variables
             # possibly restore from multiple checkpoints. useful if subset of weights
@@ -238,7 +236,8 @@ class BaseVideoPredictionModel(object):
             for checkpoint in checkpoints:
                 print("creating restore saver from checkpoint %s" % checkpoint)
                 saver, _ = tf_utils.get_checkpoint_restore_saver(
-                    checkpoint, var_list, skip_global_step=skip_global_step)
+                    checkpoint, var_list, skip_global_step=skip_global_step,
+                    restore_to_checkpoint_mapping=restore_to_checkpoint_mapping)
                 savers.append(saver)
             restore_op = [saver.saver_def.restore_op_name for saver in savers]
             sess.run(restore_op)

@@ -797,6 +797,35 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
 
+    def parse_hparams(self, hparams_dict, hparams):
+        # backwards compatibility
+        deprecated_hparams_keys = [
+            'e_net',
+            'd_conditional',
+            'd_downsample_layer',
+            'd_net',
+            'd_use_gt_inputs',
+            'acvideo_gan_weight',
+            'acvideo_vae_gan_weight',
+            'image_gan_weight',
+            'image_vae_gan_weight',
+            'tuple_gan_weight',
+            'tuple_vae_gan_weight',
+            'gan_weight',
+            'vae_gan_weight',
+            'video_gan_weight',
+            'video_vae_gan_weight',
+        ]
+        for deprecated_hparams_key in deprecated_hparams_keys:
+            hparams_dict.pop(deprecated_hparams_key, None)
+        return super(SAVPVideoPredictionModel, self).parse_hparams(hparams_dict, hparams)
+
+    def restore(self, sess, checkpoints, restore_to_checkpoint_mapping=None):
+        if restore_to_checkpoint_mapping is None:
+            # backwards compatibility
+            restore_to_checkpoint_mapping = lambda name: name.replace('savp_cell', 'dna_cell').split(':')[0]
+        super(SAVPVideoPredictionModel, self).restore(sess, checkpoints, restore_to_checkpoint_mapping)
+
 
 def apply_dna_kernels(image, kernels, dilation_rate=(1, 1)):
     """
