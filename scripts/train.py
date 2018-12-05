@@ -50,8 +50,8 @@ def main():
 
     parser.add_argument("--summary_freq", type=int, default=1000, help="save frequency of summaries (except for image and eval summaries) for train/validation set")
     parser.add_argument("--image_summary_freq", type=int, default=5000, help="save frequency of image summaries for train/validation set")
-    parser.add_argument("--eval_summary_freq", type=int, default=100000, help="save frequency of eval summaries for train/validation set. default: at the end of training")
-    parser.add_argument("--accum_eval_summary_freq", type=int, default=100000, help="save frequency of accumulated eval summaries for validation set only. default: at the end of training")
+    parser.add_argument("--eval_summary_freq", type=int, default=100000, help="save frequency of eval summaries for train/validation set")
+    parser.add_argument("--accum_eval_summary_freq", type=int, default=100000, help="save frequency of accumulated eval summaries for validation set only")
     parser.add_argument("--accum_eval_summary_num_samples", type=int, default=256, help="the number of samples (rounded based on the batch size) for the accumulated eval summaries")
     parser.add_argument("--progress_freq", type=int, default=100, help="display progress every progress_freq steps")
     parser.add_argument("--save_freq", type=int, default=5000, help="save frequence of model, 0 to disable")
@@ -187,6 +187,8 @@ def main():
             aggregate_nccl=args.aggregate_nccl)
         tf.get_variable_scope().reuse_variables()
         long_model.build_graph(long_val_dataset.make_batch(batch_size))
+    else:
+        long_model = None
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
@@ -224,6 +226,17 @@ def main():
         sess.graph.finalize()
 
         start_step = sess.run(global_step)
+
+        def should(step, freq):
+            if freq is None:
+                return (step + 1) == (max_steps - start_step)
+            else:
+                return freq and ((step + 1) % freq == 0 or (step + 1) in (0, max_steps - start_step))
+
+        def should_eval(step, freq):
+            # never run eval summaries at the beginning since it's expensive, unless it's the last iteration
+            return should(step, freq) and (step >= 0 or (step + 1) == (max_steps - start_step))
+
         # start at one step earlier to log everything without doing any training
         # step is relative to the start_step
         for step in range(-1, max_steps - start_step):
@@ -231,42 +244,38 @@ def main():
                 # skip step -1 and 0 for timing purposes (for warmstarting)
                 start_time = time.time()
 
-            def should(freq):
-                if freq is None:
-                    return (step + 1) == (max_steps - start_step)
-                else:
-                    return freq and ((step + 1) % freq == 0 or (step + 1) in (0, max_steps - start_step))
-
             fetches = {"global_step": global_step}
             if step >= 0:
                 fetches["train_op"] = model.train_op
-            if should(args.progress_freq):
+            if should(step, args.progress_freq):
                 fetches['d_loss'] = model.d_loss
                 fetches['g_loss'] = model.g_loss
                 fetches['d_losses'] = model.d_losses
                 fetches['g_losses'] = model.g_losses
                 if isinstance(model.learning_rate, tf.Tensor):
                     fetches["learning_rate"] = model.learning_rate
-            if should(args.summary_freq):
+            if should(step, args.summary_freq):
                 fetches["summary"] = model.summary_op
-            if should(args.image_summary_freq):
+            if should(step, args.image_summary_freq):
                 fetches["image_summary"] = model.image_summary_op
-            if should(args.eval_summary_freq):
+            if should_eval(step, args.eval_summary_freq):
                 fetches["eval_summary"] = model.eval_summary_op
 
             run_start_time = time.time()
             results = sess.run(fetches)
             run_elapsed_time = time.time() - run_start_time
-            if run_elapsed_time > 1.5:
-                print('session.run took %0.1fs' % run_elapsed_time)
+            if run_elapsed_time > 1.5 and step > 0 and set(fetches.keys()) == {"global_step", "train_op"}:
+                print('running train_op took too long (%0.1fs)' % run_elapsed_time)
 
-            if should(args.summary_freq) or should(args.image_summary_freq) or should(args.eval_summary_freq):
+            if (should(step, args.summary_freq) or
+                    should(step, args.image_summary_freq) or
+                    should_eval(step, args.eval_summary_freq)):
                 val_fetches = {"global_step": global_step}
-                if should(args.summary_freq):
+                if should(step, args.summary_freq):
                     val_fetches["summary"] = model.summary_op
-                if should(args.image_summary_freq):
+                if should(step, args.image_summary_freq):
                     val_fetches["image_summary"] = model.image_summary_op
-                if should(args.eval_summary_freq):
+                if should_eval(step, args.eval_summary_freq):
                     val_fetches["eval_summary"] = model.eval_summary_op
                 val_results = sess.run(val_fetches, feed_dict={train_handle: val_handle_eval})
                 for name, summary in val_results.items():
@@ -274,25 +283,24 @@ def main():
                         continue
                     val_results[name] = add_tag_suffix(summary, '_1')
 
-            if should(args.summary_freq):
+            if should(step, args.summary_freq):
                 print("recording summary")
                 summary_writer.add_summary(results["summary"], results["global_step"])
                 summary_writer.add_summary(val_results["summary"], val_results["global_step"])
                 print("done")
-            if should(args.image_summary_freq):
+            if should(step, args.image_summary_freq):
                 print("recording image summary")
                 summary_writer.add_summary(results["image_summary"], results["global_step"])
                 summary_writer.add_summary(val_results["image_summary"], val_results["global_step"])
                 print("done")
-            if should(args.eval_summary_freq):
+            if should_eval(step, args.eval_summary_freq):
                 print("recording eval summary")
                 summary_writer.add_summary(results["eval_summary"], results["global_step"])
                 summary_writer.add_summary(val_results["eval_summary"], val_results["global_step"])
                 print("done")
-            if should(args.accum_eval_summary_freq) and (step >= 0 or (step + 1) == (max_steps - start_step)):
-                # never evaluate this at the beginning since it's expensive, unless it's the last iteration
+            if should_eval(step, args.accum_eval_summary_freq):
                 val_models = [model]
-                if long_val_dataset is not None:
+                if long_model is not None:
                     val_models.append(long_model)
                 for i, val_model in enumerate(val_models):
                     sess.run(val_model.accum_eval_metrics_reset_op)
@@ -305,10 +313,10 @@ def main():
                     print("recording accum eval summary")
                     summary_writer.add_summary(accum_eval_summary, val_results["global_step"])
                     print("done")
-            if (should(args.summary_freq) or should(args.image_summary_freq) or
-                    should(args.eval_summary_freq) or should(args.accum_eval_summary_freq)):
+            if (should(step, args.summary_freq) or should(step, args.image_summary_freq) or
+                    should_eval(step, args.eval_summary_freq) or should_eval(step, args.accum_eval_summary_freq)):
                 summary_writer.flush()
-            if should(args.progress_freq):
+            if should(step, args.progress_freq):
                 # global_step will have the correct step count if we resume from a checkpoint
                 # global step is read before it's incremented
                 steps_per_epoch = train_dataset.num_examples_per_epoch() / batch_size
@@ -322,16 +330,18 @@ def main():
                     print("          image/sec %0.1f  remaining %dm (%0.1fh) (%0.1fd)" %
                           (images_per_sec, remaining_time / 60, remaining_time / 60 / 60, remaining_time / 60 / 60 / 24))
 
-                print("d_loss", results["d_loss"])
+                if results['d_losses']:
+                    print("d_loss", results["d_loss"])
                 for name, loss in results['d_losses'].items():
-                    print("    ", name, loss)
-                print("g_loss", results["g_loss"])
+                    print("  ", name, loss)
+                if results['g_losses']:
+                    print("g_loss", results["g_loss"])
                 for name, loss in results['g_losses'].items():
-                    print("    ", name, loss)
+                    print("  ", name, loss)
                 if isinstance(model.learning_rate, tf.Tensor):
                     print("learning_rate", results["learning_rate"])
 
-            if should(args.save_freq):
+            if should(step, args.save_freq):
                 print("saving model to", args.output_dir)
                 saver.save(sess, os.path.join(args.output_dir, "model"), global_step=global_step)
                 print("done")
