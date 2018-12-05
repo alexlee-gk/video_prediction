@@ -181,6 +181,7 @@ def main():
         long_hparams_dict = dict(hparams_dict)
         long_hparams_dict['sequence_length'] = val_dataset.hparams.long_sequence_length
         long_model = VideoPredictionModel(
+            mode="test",  # to not build the losses and discriminators
             hparams_dict=long_hparams_dict,
             hparams=args.model_hparams,
             aggregate_nccl=args.aggregate_nccl)

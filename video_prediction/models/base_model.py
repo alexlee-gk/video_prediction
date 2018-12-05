@@ -463,6 +463,11 @@ class VideoPredictionModel(BaseVideoPredictionModel):
         BaseVideoPredictionModel.build_graph(self, inputs)
 
         global_step = tf.train.get_or_create_global_step()
+        # Capture the variables created from here until the train_op for the
+        # saveable_variables. Note that if variables are being reused (e.g.
+        # they were created by a previously built model), those variables won't
+        # be captured here.
+        original_global_variables = tf.global_variables()
 
         if self.num_gpus <= 1:  # cpu or 1 gpu
             outputs_tuple, losses_tuple, loss_tuple, metrics_tuple = self.tower_fn(self.inputs)
@@ -500,7 +505,8 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             else:
                 self.train_op = None
 
-            self.saveable_variables = tf.global_variables()
+            global_variables = [var for var in tf.global_variables() if var not in original_global_variables]
+            self.saveable_variables = [global_step] + global_variables
             self.post_init_ops = []
         else:
             if tf.get_variable_scope().name:
@@ -508,7 +514,6 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                 # repeated forward slashes.
                 raise NotImplementedError('Unable to handle multi-gpu model created within a non-root variable scope.')
 
-            original_global_variables = tf.global_variables()
             tower_inputs = [OrderedDict() for _ in range(self.num_gpus)]
             for name, input in self.inputs.items():
                 input_splits = tf.split(input, self.num_gpus)  # assumes batch_size is divisible by num_gpus
@@ -623,7 +628,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                     m = re.match('v(\d+)/.*', var.name)
                     i = int(m.group(1)) if m else 0
                     tower_saveable_vars[i].append(var)
-                self.saveable_variables = original_global_variables + tower_saveable_vars[0]
+                self.saveable_variables = [global_step] + tower_saveable_vars[0]
 
                 post_init_ops = []
                 for i, saveable_vars in enumerate(tower_saveable_vars[1:], 1):
@@ -663,7 +668,8 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                 else:
                     self.train_op = None
 
-                self.saveable_variables = tf.global_variables()
+                global_variables = [var for var in tf.global_variables() if var not in original_global_variables]
+                self.saveable_variables = [global_step] + global_variables
                 self.post_init_ops = []
 
             # Device that runs the ops to apply global gradient updates.
