@@ -1,6 +1,5 @@
 import itertools
 import os
-import threading
 from collections import OrderedDict
 
 import numpy as np
@@ -532,7 +531,7 @@ def get_checkpoint_restore_saver(checkpoint, var_list=None, skip_global_step=Fal
     restore_to_checkpoint_mapping = restore_to_checkpoint_mapping or (lambda name: name.split(':')[0])
     if not var_list:
         var_list = tf.global_variables()
-    restore_vars = {restore_to_checkpoint_mapping(var.name): var for var in var_list}
+    restore_vars = {restore_to_checkpoint_mapping(var.name, checkpoint_var_names): var for var in var_list}
     if skip_global_step and 'global_step' in restore_vars:
         del restore_vars['global_step']
     # restore variables that are both in the global graph and in the checkpoint

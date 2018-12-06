@@ -847,9 +847,12 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
         return super(SAVPVideoPredictionModel, self).parse_hparams(hparams_dict, hparams)
 
     def restore(self, sess, checkpoints, restore_to_checkpoint_mapping=None):
-        if restore_to_checkpoint_mapping is None:
-            # backwards compatibility
-            restore_to_checkpoint_mapping = lambda name: name.replace('savp_cell', 'dna_cell').split(':')[0]
+        def restore_to_checkpoint_mapping(restore_name, checkpoint_var_names):
+            restore_name = restore_name.split(':')[0]
+            if restore_name not in checkpoint_var_names:
+                restore_name = restore_name.replace('savp_cell', 'dna_cell')
+            return restore_name
+
         super(SAVPVideoPredictionModel, self).restore(sess, checkpoints, restore_to_checkpoint_mapping)
 
 
