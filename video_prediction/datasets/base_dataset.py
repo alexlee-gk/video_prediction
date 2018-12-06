@@ -460,6 +460,7 @@ if __name__ == '__main__':
         datasets.SV2PVideoDataset('data/humans', mode='val'),
         datasets.SoftmotionVideoDataset('data/bair', mode='val'),
         datasets.KTHVideoDataset('data/kth', mode='val'),
+        datasets.KTHVideoDataset('data/kth_128', mode='val'),
         datasets.UCF101VideoDataset('data/ucf101', mode='val'),
     ]
     batch_size = 4
@@ -473,6 +474,9 @@ if __name__ == '__main__':
         images = sess.run(images)
         images = (images * 255).astype(np.uint8)
         for image in images:
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            if image.shape[-1] == 1:
+                image = np.tile(image, [1, 1, 3])
+            else:
+                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
             cv2.imshow(dataset.input_dir, image)
             cv2.waitKey(50)

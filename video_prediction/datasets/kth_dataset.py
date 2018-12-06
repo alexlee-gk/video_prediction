@@ -16,7 +16,12 @@ from video_prediction.datasets.base_dataset import VarLenFeatureVideoDataset
 class KTHVideoDataset(VarLenFeatureVideoDataset):
     def __init__(self, *args, **kwargs):
         super(KTHVideoDataset, self).__init__(*args, **kwargs)
-        self.state_like_names_and_shapes['images'] = 'images/encoded', (64, 64, 3)
+        from google.protobuf.json_format import MessageToDict
+        example = next(tf.python_io.tf_record_iterator(self.filenames[0]))
+        dict_message = MessageToDict(tf.train.Example.FromString(example))
+        feature = dict_message['features']['feature']
+        image_shape = tuple(int(feature[key]['int64List']['value'][0]) for key in ['height', 'width', 'channels'])
+        self.state_like_names_and_shapes['images'] = 'images/encoded', image_shape
 
     def get_default_hparams_dict(self):
         default_hparams = super(KTHVideoDataset, self).get_default_hparams_dict()
@@ -91,7 +96,7 @@ def save_tf_record(output_fname, sequences):
             writer.write(example.SerializeToString())
 
 
-def read_frames_and_save_tf_records(output_dir, video_dirs, sequences_per_file=128):
+def read_frames_and_save_tf_records(output_dir, video_dirs, image_size, sequences_per_file=128):
     partition_name = os.path.split(output_dir)[1]
 
     sequences = []
@@ -99,7 +104,8 @@ def read_frames_and_save_tf_records(output_dir, video_dirs, sequences_per_file=1
     sequence_lengths_file = open(os.path.join(output_dir, 'sequence_lengths.txt'), 'w')
     for video_iter, video_dir in enumerate(video_dirs):
         meta_partition_name = partition_name if partition_name == 'test' else 'train'
-        meta_fname = os.path.join(os.path.split(video_dir)[0], '%s_meta%dx%d.pkl' % (meta_partition_name, 64, 64))
+        meta_fname = os.path.join(os.path.split(video_dir)[0], '%s_meta%dx%d.pkl' %
+                                  (meta_partition_name, image_size, image_size))
         with open(meta_fname, "rb") as f:
             data = pickle.load(f)
 
@@ -108,6 +114,8 @@ def read_frames_and_save_tf_records(output_dir, video_dirs, sequences_per_file=1
         for frame_fnames_iter, frame_fnames in enumerate(d['files']):
             frame_fnames = [os.path.join(video_dir, frame_fname) for frame_fname in frame_fnames]
             frames = skimage.io.imread_collection(frame_fnames)
+            # they are grayscale images, so just keep one of the channels
+            frames = [frame[..., 0:1] for frame in frames]
 
             if not sequences:
                 last_start_sequence_iter = sequence_iter
@@ -132,6 +140,7 @@ def main():
                                                     "boxing, handclapping, handwaving, "
                                                     "jogging, running, walking")
     parser.add_argument("output_dir", type=str)
+    parser.add_argument("image_size", type=int)
     args = parser.parse_args()
 
     partition_names = ['train', 'val', 'test']
@@ -141,7 +150,7 @@ def main():
         partition_dir = os.path.join(args.output_dir, partition_name)
         if not os.path.exists(partition_dir):
             os.makedirs(partition_dir)
-        read_frames_and_save_tf_records(partition_dir, partition_fnames)
+        read_frames_and_save_tf_records(partition_dir, partition_fnames, args.image_size)
 
 
 if __name__ == '__main__':

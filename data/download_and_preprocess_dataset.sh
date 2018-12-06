@@ -3,8 +3,13 @@
 # exit if any command fails
 set -e
 
-if [ "$#" -ne 1 ]; then
-  echo "Usage: $0 DATASET_NAME" >&2
+if [ "$#" -eq 2 ]; then
+  if [ $1 = "bair" ]; then
+    echo "IMAGE_SIZE argument is only applicable to kth dataset" >&2
+    exit 1
+  fi
+elif [ "$#" -ne 1 ]; then
+  echo "Usage: $0 DATASET_NAME [IMAGE_SIZE]" >&2
   exit 1
 fi
 if [ $1 = "bair" ]; then
@@ -20,7 +25,14 @@ if [ $1 = "bair" ]; then
   # reserve a fraction of the training set for validation
   mv ${TARGET_DIR}/train/traj_256_to_511.tfrecords ${TARGET_DIR}/val/
 elif [ $1 = "kth" ]; then
-  TARGET_DIR=./data/kth
+  if [ "$#" -eq 2 ]; then
+    IMAGE_SIZE=$2
+    TARGET_DIR=./data/kth_${IMAGE_SIZE}
+  else
+    IMAGE_SIZE=64
+    TARGET_DIR=./data/kth
+  fi
+  echo ${TARGET_DIR} ${IMAGE_SIZE}
   mkdir -p ${TARGET_DIR}
   mkdir -p ${TARGET_DIR}/raw
   echo "Downloading '$1' dataset (this takes a while)"
@@ -31,7 +43,6 @@ elif [ $1 = "kth" ]; then
     unzip ${TARGET_DIR}/raw/${ZIP_FNAME} -d ${TARGET_DIR}/raw/${ACTION}
   done
   FRAME_RATE=25
-  IMAGE_SIZE=64
   mkdir -p ${TARGET_DIR}/processed
   # download files with metadata specifying the subsequences
   TAR_FNAME=kth_meta.tar.gz
@@ -53,7 +64,7 @@ elif [ $1 = "kth" ]; then
       ${TARGET_DIR}/processed/${ACTION}/${FNAME}/image-%03d_${IMAGE_SIZE}x${IMAGE_SIZE}.png
     done
   done
-  python video_prediction/datasets/kth_dataset.py ${TARGET_DIR}/processed ${TARGET_DIR}
+  python video_prediction/datasets/kth_dataset.py ${TARGET_DIR}/processed ${TARGET_DIR} ${IMAGE_SIZE}
   rm -rf ${TARGET_DIR}/raw
   rm -rf ${TARGET_DIR}/processed
 else
