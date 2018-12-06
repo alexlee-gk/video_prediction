@@ -385,6 +385,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             gan_feature_l2_weight=0.0,
             gan_feature_cdist_weight=0.0,
             gan_loss_type='LSGAN',
+            joint_gan_optimization=False,
             kl_weight=0.0,
             kl_anneal='linear',
             kl_anneal_k=-1.0,
@@ -489,9 +490,10 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                             d_train_op = d_optimizer.apply_gradients(d_gradvars)
                     else:
                         d_train_op = tf.no_op()
-                with tf.control_dependencies([d_train_op]):
+                with tf.control_dependencies([d_train_op] if not self.hparams.joint_gan_optimization else []):
                     if g_losses_post:
-                        replace_read_ops(g_loss_post, self.d_vars)
+                        if not self.hparams.joint_gan_optimization:
+                            replace_read_ops(g_loss_post, self.d_vars)
                         with tf.name_scope('g_compute_gradients'):
                             g_gradvars = g_optimizer.compute_gradients(g_loss_post, var_list=self.g_vars)
                         with tf.name_scope('g_apply_gradients'):
@@ -592,11 +594,12 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                             d_train_op = tf.group(*tower_d_train_op)
                         else:
                             d_train_op = tf.no_op()
-                    with tf.control_dependencies([d_train_op]):
+                    with tf.control_dependencies([d_train_op] if not self.hparams.joint_gan_optimization else []):
                         if any(tower_g_losses_post):
                             for i in range(self.num_gpus):
                                 with tf.device('/gpu:%d' % i):
-                                    replace_read_ops(tower_g_loss_post[i], tower_d_vars[i])
+                                    if not self.hparams.joint_gan_optimization:
+                                        replace_read_ops(tower_g_loss_post[i], tower_d_vars[i])
 
                                     with tf.name_scope(scope_replica('g_compute_gradients', i)):
                                         g_gradvars = tower_g_optimizer[i].compute_gradients(
@@ -650,10 +653,11 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                                 d_train_op = d_optimizer.apply_gradients(d_gradvars)
                         else:
                             d_train_op = tf.no_op()
-                    with tf.control_dependencies([d_train_op]):
+                    with tf.control_dependencies([d_train_op] if not self.hparams.joint_gan_optimization else []):
                         if any(tower_g_losses_post):
                             for g_loss_post in tower_g_loss_post:
-                                replace_read_ops(g_loss_post, self.d_vars)
+                                if not self.hparams.joint_gan_optimization:
+                                    replace_read_ops(g_loss_post, self.d_vars)
                             with tf.name_scope('g_compute_gradients'):
                                 g_gradvars = compute_averaged_gradients(
                                     g_optimizer, tower_g_loss_post, var_list=self.g_vars)
