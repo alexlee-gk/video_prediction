@@ -179,8 +179,8 @@ class SAVPCell(tf.nn.rnn_cell.RNNCell):
         batch_size = inputs['images'].shape[1].value
         image_shape = inputs['images'].shape.as_list()[2:]
         height, width, _ = image_shape
-        scale_size = max(height, width)
-        if scale_size == 256:
+        scale_size = min(height, width)
+        if scale_size >= 256:
             self.encoder_layer_specs = [
                 (self.hparams.ngf, False),
                 (self.hparams.ngf * 2, False),
@@ -195,7 +195,7 @@ class SAVPCell(tf.nn.rnn_cell.RNNCell):
                 (self.hparams.ngf, False),
                 (self.hparams.ngf, False),
             ]
-        elif (height, width) == (240, 320):
+        elif scale_size >= 128:
             self.encoder_layer_specs = [
                 (self.hparams.ngf, False),
                 (self.hparams.ngf * 2, True),
@@ -208,7 +208,7 @@ class SAVPCell(tf.nn.rnn_cell.RNNCell):
                 (self.hparams.ngf * 2, False),
                 (self.hparams.ngf, False),
             ]
-        elif scale_size == 64:
+        elif scale_size >= 64:
             self.encoder_layer_specs = [
                 (self.hparams.ngf, True),
                 (self.hparams.ngf * 2, True),
@@ -219,7 +219,7 @@ class SAVPCell(tf.nn.rnn_cell.RNNCell):
                 (self.hparams.ngf, True),
                 (self.hparams.ngf, False),
             ]
-        elif scale_size == 32:
+        elif scale_size >= 32:
             self.encoder_layer_specs = [
                 (self.hparams.ngf, True),
                 (self.hparams.ngf * 2, True),
@@ -230,6 +230,11 @@ class SAVPCell(tf.nn.rnn_cell.RNNCell):
             ]
         else:
             raise NotImplementedError
+        assert len(self.encoder_layer_specs) == len(self.decoder_layer_specs)
+        total_stride = 2 ** len(self.encoder_layer_specs)
+        if (height % total_stride) or (width % total_stride):
+            raise ValueError("The image has dimension (%d, %d), but it should be divisible "
+                             "by the total stride, which is %d." % (height, width, total_stride))
 
         # output_size
         num_masks = self.hparams.last_frames * self.hparams.num_transformed_images + \
