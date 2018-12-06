@@ -781,6 +781,7 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
         hparams = dict(
             l1_weight=1.0,
             l2_weight=0.0,
+            tv_weight=0.001,
             n_layers=3,
             ndf=32,
             norm_layer='instance',
@@ -789,7 +790,7 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
             downsample_layer='conv_pool2d',
             upsample_layer='upsample_conv2d',
             activation_layer='relu',  # for generator only
-            transformation='cdna',
+            transformation='flow',
             kernel_size=(5, 5),
             dilation_rate=(1, 1),
             where_add='all',
@@ -811,12 +812,12 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
             schedule_sampling_k=900.0,
             schedule_sampling_steps=(0, 100000),
             use_e_rnn=False,
-            learn_prior=False,
-            nz=8,
+            learn_prior=True,
+            nz=32,
             num_samples=8,
             nef=64,
             use_rnn_z=True,
-            ablation_conv_rnn_norm=False,
+            ablation_conv_rnn_norm=True,
             ablation_rnn=False,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
