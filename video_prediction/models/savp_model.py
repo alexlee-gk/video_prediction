@@ -824,6 +824,7 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
     def parse_hparams(self, hparams_dict, hparams):
         # backwards compatibility
         deprecated_hparams_keys = [
+            'num_gpus',
             'e_net',
             'd_conditional',
             'd_downsample_layer',
