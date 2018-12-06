@@ -125,11 +125,25 @@ class BasicConv2DLSTMCell(rnn_cell_impl.RNNCell):
             outputs = nn_ops.bias_add(outputs, bias)
         return outputs
 
+    def _dense(self, inputs):
+        num_units = 4 * self._filters
+        input_shape = inputs.shape.as_list()
+        kernel_shape = [input_shape[-1], num_units]
+        kernel = vs.get_variable("weights", kernel_shape, dtype=dtypes.float32,
+                                 initializer=init_ops.truncated_normal_initializer(stddev=0.02))
+        outputs = tf.matmul(inputs, kernel)
+        return outputs
+
     def call(self, inputs, state):
         """2D Convolutional LSTM cell with (optional) normalization and recurrent dropout."""
         c, h = state
+        tile_concat = isinstance(inputs, (list, tuple))
+        if tile_concat:
+            inputs, inputs_non_spatial = inputs
         args = array_ops.concat([inputs, h], -1)
         concat = self._conv2d(args)
+        if tile_concat:
+            concat = concat + self._dense(inputs_non_spatial)[:, None, None, :]
 
         if self._normalizer_fn and not self._separate_norms:
             concat = self._norm(concat, "input_transform_forget_output")
@@ -209,13 +223,26 @@ class Conv2DGRUCell(tf.nn.rnn_cell.RNNCell):
             outputs = nn_ops.bias_add(outputs, bias)
         return outputs
 
+    def _dense(self, inputs, num_units):
+        input_shape = inputs.shape.as_list()
+        kernel_shape = [input_shape[-1], num_units]
+        kernel = vs.get_variable("weights", kernel_shape, dtype=dtypes.float32,
+                                 initializer=init_ops.truncated_normal_initializer(stddev=0.02))
+        outputs = tf.matmul(inputs, kernel)
+        return outputs
+
     def call(self, inputs, state):
         bias_ones = self._bias_initializer
         if self._bias_initializer is None:
             bias_ones = init_ops.ones_initializer()
+        tile_concat = isinstance(inputs, (list, tuple))
+        if tile_concat:
+            inputs, inputs_non_spatial = inputs
         with vs.variable_scope('gates'):
             inputs = array_ops.concat([inputs, state], axis=-1)
             concat = self._conv2d(inputs, 2 * self._filters, bias_ones)
+            if tile_concat:
+                concat = concat + self._dense(inputs_non_spatial, concat.shape[-1].value)[:, None, None, :]
             if self._normalizer_fn and not self._separate_norms:
                 concat = self._norm(concat, "reset_update", bias_ones)
             r, u = array_ops.split(concat, 2, axis=-1)
@@ -230,6 +257,8 @@ class Conv2DGRUCell(tf.nn.rnn_cell.RNNCell):
         with vs.variable_scope('candidate'):
             inputs = array_ops.concat([inputs, r * state], axis=-1)
             candidate = self._conv2d(inputs, self._filters, bias_zeros)
+            if tile_concat:
+                candidate = candidate + self._dense(inputs_non_spatial, candidate.shape[-1].value)[:, None, None, :]
             if self._normalizer_fn:
                 candidate = self._norm(candidate, "state", bias_zeros)
 

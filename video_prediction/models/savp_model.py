@@ -357,7 +357,10 @@ class SAVPCell(tf.nn.rnn_cell.RNNCell):
         return rnn_cell(inputs, state)
 
     def _conv_rnn_func(self, inputs, state, filters):
-        inputs_shape = inputs.get_shape().as_list()
+        if isinstance(inputs, (list, tuple)):
+            inputs_shape = inputs[0].shape.as_list()
+        else:
+            inputs_shape = inputs.shape.as_list()
         input_shape = inputs_shape[1:]
         if self.hparams.conv_rnn_norm_layer == 'none':
             normalizer_fn = None
@@ -446,18 +449,26 @@ class SAVPCell(tf.nn.rnn_cell.RNNCell):
                     h = layers[-1][-1]
                     kernel_size = (3, 3)
                 if self.hparams.where_add == 'all' or (self.hparams.where_add == 'input' and i == 0):
-                    h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
-                h = downsample_layer(h, out_channels, kernel_size=kernel_size, strides=(2, 2))
+                    if self.hparams.use_tile_concat:
+                        h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
+                    else:
+                        h = [h, state_action_z]
+                h = _maybe_tile_concat_layer(downsample_layer)(
+                    h, out_channels, kernel_size=kernel_size, strides=(2, 2))
                 h = norm_layer(h)
                 h = activation_layer(h)
             if use_conv_rnn:
                 with tf.variable_scope('%s_h%d' % ('conv' if self.hparams.ablation_rnn else self.hparams.conv_rnn, i)):
                     if self.hparams.where_add == 'all':
-                        conv_rnn_h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
+                        if self.hparams.use_tile_concat:
+                            conv_rnn_h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
+                        else:
+                            conv_rnn_h = [h, state_action_z]
                     else:
                         conv_rnn_h = h
                     if self.hparams.ablation_rnn:
-                        conv_rnn_h = conv2d(conv_rnn_h, out_channels, kernel_size=(5, 5))
+                        conv_rnn_h = _maybe_tile_concat_layer(conv2d)(
+                            conv_rnn_h, out_channels, kernel_size=(5, 5))
                         conv_rnn_h = norm_layer(conv_rnn_h)
                         conv_rnn_h = activation_layer(conv_rnn_h)
                     else:
@@ -474,18 +485,25 @@ class SAVPCell(tf.nn.rnn_cell.RNNCell):
                 else:
                     h = tf.concat([layers[-1][-1], layers[num_encoder_layers - i - 1][-1]], axis=-1)
                 if self.hparams.where_add == 'all' or (self.hparams.where_add == 'middle' and i == 0):
-                    h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
-                h = upsample_layer(h, out_channels, kernel_size=(3, 3), strides=(2, 2))
+                    if self.hparams.use_tile_concat:
+                        h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
+                    else:
+                        h = [h, state_action_z]
+                h = _maybe_tile_concat_layer(upsample_layer)(
+                    h, out_channels, kernel_size=(3, 3), strides=(2, 2))
                 h = norm_layer(h)
                 h = activation_layer(h)
             if use_conv_rnn:
                 with tf.variable_scope('%s_h%d' % ('conv' if self.hparams.ablation_rnn else self.hparams.conv_rnn, len(layers))):
                     if self.hparams.where_add == 'all':
-                        conv_rnn_h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
+                        if self.hparams.use_tile_concat:
+                            conv_rnn_h = tile_concat([h, state_action_z[:, None, None, :]], axis=-1)
+                        else:
+                            conv_rnn_h = [h, state_action_z]
                     else:
                         conv_rnn_h = h
                     if self.hparams.ablation_rnn:
-                        conv_rnn_h = conv2d(conv_rnn_h, out_channels, kernel_size=(5, 5))
+                        conv_rnn_h = _maybe_tile_concat_layer(conv2d)(conv_rnn_h, out_channels, kernel_size=(5, 5))
                         conv_rnn_h = norm_layer(conv_rnn_h)
                         conv_rnn_h = activation_layer(conv_rnn_h)
                     else:
@@ -770,6 +788,7 @@ class SAVPVideoPredictionModel(VideoPredictionModel):
             kernel_size=(5, 5),
             dilation_rate=(1, 1),
             where_add='all',
+            use_tile_concat=True,
             learn_initial_state=False,
             rnn='lstm',
             conv_rnn='lstm',
@@ -950,3 +969,16 @@ def identity_kernel(kernel_size):
     kernel[center_slice(kh), center_slice(kw)] = 1.0
     kernel /= np.sum(kernel)
     return kernel
+
+
+def _maybe_tile_concat_layer(conv2d_layer):
+    def layer(inputs, out_channels, *args, **kwargs):
+        if isinstance(inputs, (list, tuple)):
+            inputs_spatial, inputs_non_spatial = inputs
+            outputs = (conv2d_layer(inputs_spatial, out_channels, *args, **kwargs) +
+                       dense(inputs_non_spatial, out_channels, use_bias=False)[:, None, None, :])
+        else:
+            outputs = conv2d_layer(inputs, out_channels, *args, **kwargs)
+        return outputs
+
+    return layer
