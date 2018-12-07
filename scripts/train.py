@@ -4,7 +4,6 @@ from __future__ import print_function
 
 import argparse
 import errno
-import itertools
 import json
 import os
 import random
@@ -52,7 +51,6 @@ def main():
     parser.add_argument("--image_summary_freq", type=int, default=5000, help="save frequency of image summaries for train/validation set")
     parser.add_argument("--eval_summary_freq", type=int, default=25000, help="save frequency of eval summaries for train/validation set")
     parser.add_argument("--accum_eval_summary_freq", type=int, default=100000, help="save frequency of accumulated eval summaries for validation set only")
-    parser.add_argument("--accum_eval_summary_num_samples", type=int, default=256, help="the number of samples (rounded based on the batch size) for the accumulated eval summaries")
     parser.add_argument("--progress_freq", type=int, default=100, help="display progress every progress_freq steps")
     parser.add_argument("--save_freq", type=int, default=5000, help="save frequence of model, 0 to disable")
 
@@ -179,7 +177,9 @@ def main():
         # separately build a model for the longer sequence.
         # this is needed because the model doesn't support dynamic shapes.
         long_hparams_dict = dict(hparams_dict)
-        long_hparams_dict['sequence_length'] = val_dataset.hparams.long_sequence_length
+        long_hparams_dict['sequence_length'] = long_val_dataset.hparams.sequence_length
+        # use smaller batch size for longer model to prevenet running out of memory
+        long_hparams_dict['batch_size'] = model.hparams.batch_size // 2
         long_model = VideoPredictionModel(
             mode="test",  # to not build the losses and discriminators
             hparams_dict=long_hparams_dict,
@@ -299,12 +299,15 @@ def main():
                 summary_writer.add_summary(val_results["eval_summary"], val_results["global_step"])
                 print("done")
             if should_eval(step, args.accum_eval_summary_freq):
+                val_datasets = [val_dataset]
                 val_models = [model]
                 if long_model is not None:
+                    val_datasets.append(long_val_dataset)
                     val_models.append(long_model)
-                for i, val_model in enumerate(val_models):
+                for i, (val_dataset_, val_model) in enumerate(zip(val_datasets, val_models)):
                     sess.run(val_model.accum_eval_metrics_reset_op)
-                    accum_eval_summary_num_updates = args.accum_eval_summary_num_samples // batch_size
+                    # traverse (roughly up to rounding based on the batch size) all the validation dataset
+                    accum_eval_summary_num_updates = val_dataset_.num_examples_per_epoch() // val_model.hparams.batch_size
                     val_fetches = {"global_step": global_step, "accum_eval_summary": val_model.accum_eval_summary_op}
                     for update_step in range(accum_eval_summary_num_updates):
                         print('evaluating %d / %d' % (update_step + 1, accum_eval_summary_num_updates))
