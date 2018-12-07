@@ -186,7 +186,6 @@ def tensor_to_clip(tensor):
         tensor = tf.concat(tf.unstack(tensor, axis=0), axis=2)
     if tensor.shape.ndims == 4:
         # keep up to the first 3 channels
-        tensor = tensor[..., :3]
         tensor = tf.image.convert_image_dtype(tensor, dtype=tf.uint8, saturate=True)
     else:
         raise NotImplementedError
@@ -202,7 +201,6 @@ def tensor_to_image_batch(tensor):
         tensor = tf.concat(tf.unstack(tensor, axis=1), axis=2)
     if tensor.shape.ndims == 4:
         # keep up to the first 3 channels
-        tensor = tensor[..., :3]
         tensor = tf.image.convert_image_dtype(tensor, dtype=tf.uint8, saturate=True)
     else:
         raise NotImplementedError
@@ -226,7 +224,11 @@ def add_image_summaries(outputs, max_outputs=8, collections=None):
             for name, output in outputs.items():
                 if max_outputs:
                     output = output[:max_outputs]
-                tf.summary.image(name, tensor_to_image_batch(output), collections=collections)
+                output = tensor_to_image_batch(output)
+                if output.shape[-1] not in (1, 3):
+                    # these are feature maps, so just skip them
+                    continue
+                tf.summary.image(name, output, collections=collections)
 
 
 def add_gif_summaries(outputs, max_outputs=8, collections=None):
@@ -237,7 +239,11 @@ def add_gif_summaries(outputs, max_outputs=8, collections=None):
             for name, output in outputs.items():
                 if max_outputs:
                     output = output[:max_outputs]
-                gif_summary.gif_summary(name, tensor_to_clip(output)[None], fps=4, collections=collections)
+                output = tensor_to_clip(output)
+                if output.shape[-1] not in (1, 3):
+                    # these are feature maps, so just skip them
+                    continue
+                gif_summary.gif_summary(name, output[None], fps=4, collections=collections)
 
 
 def add_scalar_summaries(losses_or_metrics, collections=None):
@@ -258,7 +264,7 @@ def add_summaries(outputs, collections=None):
             scalar_outputs[name] = output
         elif output.shape.ndims == 4:
             image_outputs[name] = output
-        elif output.shape.ndims > 4 and output.shape[-1].value in (1, 3):
+        elif output.shape.ndims > 4 and output.shape[4].value in (1, 3):
             gif_outputs[name] = output
     add_scalar_summaries(scalar_outputs, collections=collections)
     add_image_summaries(image_outputs, collections=collections)
