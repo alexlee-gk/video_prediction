@@ -135,8 +135,11 @@ class BaseVideoPredictionModel(object):
         num_samples_for_diversity = num_samples_for_diversity or self.eval_num_samples_for_diversity
         parallel_iterations = parallel_iterations or self.eval_parallel_iterations
 
-        batch_size = tf.shape(inputs['images'])[1]
-        sequence_length = tf.shape(inputs['images'])[0]
+        sequence_length, batch_size = inputs['images'].shape[:2].as_list()
+        if batch_size is None:
+            batch_size = tf.shape(inputs['images'])[1]
+        if sequence_length is None:
+            sequence_length = tf.shape(inputs['images'])[0]
         context_frames = self.hparams.context_frames
         future_length = sequence_length - context_frames
         # the outputs include all the frames, whereas the metrics include only the future frames
