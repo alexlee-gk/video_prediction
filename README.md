@@ -24,12 +24,14 @@ cd video_prediction
 ```
 - Install TensorFlow >= 1.9 and dependencies from http://tensorflow.org/
 - Install ffmpeg (optional, used to generate GIFs for visualization, e.g. in TensorBoard)
-- Install [NCCL](https://developer.nvidia.com/nccl) (optional, used for multi-GPU support)
 - Install other dependencies
 ```bash
 pip install -r requirements.txt
 ```
-Note: in macOS, make sure that bash >= 4.0 is used (needed for associative arrays in `download_model.sh` script).
+### Miscellaneous installation considerations
+- In python >= 3.6, make sure to add the root directory to the `PYTHONPATH`, e.g. `export PYTHONPATH=path/to/video_prediction`.
+- For the best speed and experimental results, we recommend using cudnn version 7.3.0.29 and any tensorflow version >= 1.9 and <= 1.12. The final training loss is worse when using cudnn versions 7.3.1.20 or 7.4.1.5, compared to when using versions 7.3.0.29 and below.
+- In macOS, make sure that bash >= 4.0 is used (needed for associative arrays in `download_model.sh` script).
 
 ### Use a Pre-trained Model
 - Download and preprocess a dataset (e.g. `bair`):
