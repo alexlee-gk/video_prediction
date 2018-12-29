@@ -26,7 +26,7 @@ def save_gif(gif_fname, images, fps):
            '-vcodec', 'rawvideo',
            '-r', '%.02f' % fps,
            '-s', '%dx%d' % (w, h),
-           '-pix_fmt', {1: 'gray', 3: 'rgb24', 4: 'rgba'}[c],
+           '-pix_fmt', {1: 'gray', 3: 'rgb24'}[c],
            '-i', '-',
            '-filter_complex', '[0:v]split[x][z];[z]palettegen[y];[x][y]paletteuse',
            '-r', '%.02f' % fps,
@@ -42,6 +42,16 @@ def save_gif(gif_fname, images, fps):
 
 
 def encode_gif(images, fps):
+    """Encodes numpy images into gif string.
+    Args:
+        images: A 5-D `uint8` `np.array` (or a list of 4-D images) of shape
+            `[batch_size, time, height, width, channels]` where `channels` is 1 or 3.
+        fps: frames per second of the animation
+    Returns:
+        The encoded gif string.
+    Raises:
+        IOError: If the ffmpeg command returns an error.
+    """
     from subprocess import Popen, PIPE
     h, w, c = images[0].shape
     cmd = ['ffmpeg', '-y',
@@ -49,7 +59,7 @@ def encode_gif(images, fps):
            '-vcodec', 'rawvideo',
            '-r', '%.02f' % fps,
            '-s', '%dx%d' % (w, h),
-           '-pix_fmt', {1: 'gray', 3: 'rgb24', 4: 'rgba'}[c],
+           '-pix_fmt', {1: 'gray', 3: 'rgb24'}[c],
            '-i', '-',
            '-filter_complex', '[0:v]split[x][z];[z]palettegen[y];[x][y]paletteuse',
            '-r', '%.02f' % fps,

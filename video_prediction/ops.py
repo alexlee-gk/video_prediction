@@ -2,15 +2,17 @@ import numpy as np
 import tensorflow as tf
 
 
-def dense(inputs, units, use_spectral_norm=False):
+def dense(inputs, units, use_spectral_norm=False, use_bias=True):
     with tf.variable_scope('dense'):
         input_shape = inputs.get_shape().as_list()
         kernel_shape = [input_shape[1], units]
         kernel = tf.get_variable('kernel', kernel_shape, dtype=tf.float32, initializer=tf.truncated_normal_initializer(stddev=0.02))
         if use_spectral_norm:
             kernel = spectral_normed_weight(kernel)
-        bias = tf.get_variable('bias', [units], dtype=tf.float32, initializer=tf.zeros_initializer())
-        outputs = tf.matmul(inputs, kernel) + bias
+        outputs = tf.matmul(inputs, kernel)
+        if use_bias:
+            bias = tf.get_variable('bias', [units], dtype=tf.float32, initializer=tf.zeros_initializer())
+            outputs = tf.nn.bias_add(outputs, bias)
         return outputs
 
 
@@ -946,8 +948,8 @@ def flatten(input, axis=1, end_axis=-1):
     Returns:
         A M-D tensor where M = N - (end_axis - axis)
     """
-    input_shape = input.shape
-    input_rank = input_shape.ndims
+    input_shape = tf.shape(input)
+    input_rank = tf.shape(input_shape)[0]
     if axis < 0:
         axis = input_rank + axis
     if end_axis < 0:
@@ -1045,6 +1047,16 @@ def spectral_normed_weight(W, u=None, num_iters=1):
         tf.add_to_collection(SPECTRAL_NORMALIZATION_VARIABLES, u)
         tf.add_to_collection(tf.GraphKeys.UPDATE_OPS, u.assign(u_final))
     return W_bar
+
+
+def get_activation_layer(layer_type):
+    if layer_type == 'relu':
+        layer = tf.nn.relu
+    elif layer_type == 'elu':
+        layer = tf.nn.elu
+    else:
+        raise ValueError('Invalid activation layer %s' % layer_type)
+    return layer
 
 
 def get_norm_layer(layer_type):

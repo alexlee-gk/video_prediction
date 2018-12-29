@@ -1,7 +1,5 @@
 import itertools
 import os
-import tempfile
-import threading
 from collections import OrderedDict
 
 import numpy as np
@@ -14,6 +12,7 @@ from tensorflow.python.training import device_setter
 from tensorflow.python.util import nest
 
 from video_prediction.utils import ffmpeg_gif
+from video_prediction.utils import gif_summary
 
 IMAGE_SUMMARIES = "image_summaries"
 EVAL_SUMMARIES = "eval_summaries"
@@ -85,7 +84,7 @@ def replace_read_ops(loss_or_losses, var_list):
                 ge.connect(ge.sgv(var.read_value().op), consumer_sgv)
 
 
-def print_loss_info(losses, inputs, outputs, targets):
+def print_loss_info(losses, *tensors):
     def get_descendants(tensor, tensors):
         descendants = []
         for child in tensor.op.inputs:
@@ -95,7 +94,7 @@ def print_loss_info(losses, inputs, outputs, targets):
                 descendants.extend(get_descendants(child, tensors))
         return descendants
 
-    name_to_tensors = list(inputs.items()) + list(outputs.items()) + [('targets', targets)]
+    name_to_tensors = itertools.chain(*[tensor.items() for tensor in tensors])
     tensor_to_names = OrderedDict([(v, k) for k, v in name_to_tensors])
 
     print(tf.get_default_graph().get_name_scope())
@@ -108,11 +107,63 @@ def print_loss_info(losses, inputs, outputs, targets):
             print('    %s' % descendant_name)
 
 
+def with_flat_batch(flat_batch_fn, ndims=4):
+    def fn(x, *args, **kwargs):
+        shape = tf.shape(x)
+        flat_batch_shape = tf.concat([[-1], shape[-(ndims-1):]], axis=0)
+        flat_batch_shape.set_shape([ndims])
+        flat_batch_x = tf.reshape(x, flat_batch_shape)
+        flat_batch_r = flat_batch_fn(flat_batch_x, *args, **kwargs)
+        r = nest.map_structure(lambda x: tf.reshape(x, tf.concat([shape[:-(ndims-1)], tf.shape(x)[1:]], axis=0)),
+                               flat_batch_r)
+        return r
+    return fn
+
+
 def transpose_batch_time(x):
     if isinstance(x, tf.Tensor) and x.shape.ndims >= 2:
         return tf.transpose(x, [1, 0] + list(range(2, x.shape.ndims)))
     else:
         return x
+
+
+def dimension(inputs, axis=0):
+    shapes = [input_.shape for input_ in nest.flatten(inputs)]
+    s = tf.TensorShape([None])
+    for shape in shapes:
+        s = s.merge_with(shape[axis:axis + 1])
+    dim = s[0].value
+    return dim
+
+
+def unroll_rnn(cell, inputs, scope=None, use_dynamic_rnn=True):
+    """Chooses between dynamic_rnn and static_rnn if the leading time dimension is dynamic or not."""
+    dim = dimension(inputs, axis=0)
+    if use_dynamic_rnn or dim is None:
+        return tf.nn.dynamic_rnn(cell, inputs, dtype=tf.float32,
+                                 swap_memory=False, time_major=True, scope=scope)
+    else:
+        return static_rnn(cell, inputs, scope=scope)
+
+
+def static_rnn(cell, inputs, scope=None):
+    """Simple version of static_rnn."""
+    with tf.variable_scope(scope or "rnn") as varscope:
+        batch_size = dimension(inputs, axis=1)
+        state = cell.zero_state(batch_size, tf.float32)
+        flat_inputs = nest.flatten(inputs)
+        flat_inputs = list(zip(*[tf.unstack(flat_input, axis=0) for flat_input in flat_inputs]))
+        flat_outputs = []
+        for time, flat_input in enumerate(flat_inputs):
+            if time > 0:
+                varscope.reuse_variables()
+            input_ = nest.pack_sequence_as(inputs, flat_input)
+            output, state = cell(input_, state)
+            flat_output = nest.flatten(output)
+            flat_outputs.append(flat_output)
+        flat_outputs = [tf.stack(flat_output, axis=0) for flat_output in zip(*flat_outputs)]
+        outputs = nest.pack_sequence_as(output, flat_outputs)
+        return outputs, state
 
 
 def maybe_pad_or_slice(tensor, desired_length):
@@ -135,7 +186,6 @@ def tensor_to_clip(tensor):
         tensor = tf.concat(tf.unstack(tensor, axis=0), axis=2)
     if tensor.shape.ndims == 4:
         # keep up to the first 3 channels
-        tensor = tensor[..., :3]
         tensor = tf.image.convert_image_dtype(tensor, dtype=tf.uint8, saturate=True)
     else:
         raise NotImplementedError
@@ -151,7 +201,6 @@ def tensor_to_image_batch(tensor):
         tensor = tf.concat(tf.unstack(tensor, axis=1), axis=2)
     if tensor.shape.ndims == 4:
         # keep up to the first 3 channels
-        tensor = tensor[..., :3]
         tensor = tf.image.convert_image_dtype(tensor, dtype=tf.uint8, saturate=True)
     else:
         raise NotImplementedError
@@ -161,32 +210,40 @@ def tensor_to_image_batch(tensor):
 def _as_name_scope_map(values):
     name_scope_to_values = {}
     for name, value in values.items():
-        name_scope = "%s_summary" % name.split('/')[0]
+        name_scope = name.split('/')[0]
         name_scope_to_values.setdefault(name_scope, {})
         name_scope_to_values[name_scope][name] = value
     return name_scope_to_values
 
 
-def add_image_summaries(outputs, max_outputs=16, collections=None):
+def add_image_summaries(outputs, max_outputs=8, collections=None):
     if collections is None:
-        collections = [IMAGE_SUMMARIES]
+        collections = [tf.GraphKeys.SUMMARIES, IMAGE_SUMMARIES]
     for name_scope, outputs in _as_name_scope_map(outputs).items():
         with tf.name_scope(name_scope):
             for name, output in outputs.items():
                 if max_outputs:
                     output = output[:max_outputs]
-                tf.summary.image(name, tensor_to_image_batch(output), collections=collections)
+                output = tensor_to_image_batch(output)
+                if output.shape[-1] not in (1, 3):
+                    # these are feature maps, so just skip them
+                    continue
+                tf.summary.image(name, output, collections=collections)
 
 
-def add_tensor_summaries(outputs, max_outputs=16, collections=None):
+def add_gif_summaries(outputs, max_outputs=8, collections=None):
     if collections is None:
-        collections = [IMAGE_SUMMARIES]
+        collections = [tf.GraphKeys.SUMMARIES, IMAGE_SUMMARIES]
     for name_scope, outputs in _as_name_scope_map(outputs).items():
         with tf.name_scope(name_scope):
             for name, output in outputs.items():
                 if max_outputs:
                     output = output[:max_outputs]
-                tf.summary.tensor_summary(name, tensor_to_clip(output), collections=collections)
+                output = tensor_to_clip(output)
+                if output.shape[-1] not in (1, 3):
+                    # these are feature maps, so just skip them
+                    continue
+                gif_summary.gif_summary(name, output[None], fps=4, collections=collections)
 
 
 def add_scalar_summaries(losses_or_metrics, collections=None):
@@ -201,17 +258,17 @@ def add_scalar_summaries(losses_or_metrics, collections=None):
 def add_summaries(outputs, collections=None):
     scalar_outputs = OrderedDict()
     image_outputs = OrderedDict()
-    tensor_outputs = OrderedDict()
+    gif_outputs = OrderedDict()
     for name, output in outputs.items():
         if output.shape.ndims == 0:
             scalar_outputs[name] = output
         elif output.shape.ndims == 4:
             image_outputs[name] = output
-        else:
-            tensor_outputs[name] = output
+        elif output.shape.ndims > 4 and output.shape[4].value in (1, 3):
+            gif_outputs[name] = output
     add_scalar_summaries(scalar_outputs, collections=collections)
     add_image_summaries(image_outputs, collections=collections)
-    add_tensor_summaries(tensor_outputs, collections=collections)
+    add_gif_summaries(gif_outputs, collections=collections)
 
 
 def plot_buf(y):
@@ -294,6 +351,14 @@ def add_plot_summaries(metrics, x_offset=0, collections=None):
                 plot_summary(name, x_offset + tf.range(tf.shape(metric)[0]), metric, collections=collections)
 
 
+def add_plot_and_scalar_summaries(metrics, x_offset=0, collections=None):
+    for name_scope, metrics in _as_name_scope_map(metrics).items():
+        with tf.name_scope(name_scope):
+            for name, metric in metrics.items():
+                tf.summary.scalar(name, tf.reduce_mean(metric), collections=collections)
+                plot_summary(name, x_offset + tf.range(tf.shape(metric)[0]), metric, collections=collections)
+
+
 def convert_tensor_to_gif_summary(summ):
     if isinstance(summ, bytes):
         summary_proto = tf.Summary()
@@ -354,6 +419,70 @@ def compute_averaged_gradients(opt, tower_loss, **kwargs):
     return gradvars
 
 
+# the next 3 function are from tensorpack:
+# https://github.com/tensorpack/tensorpack/blob/master/tensorpack/graph_builder/utils.py
+def split_grad_list(grad_list):
+    """
+    Args:
+        grad_list: K x N x 2
+
+    Returns:
+        K x N: gradients
+        K x N: variables
+    """
+    g = []
+    v = []
+    for tower in grad_list:
+        g.append([x[0] for x in tower])
+        v.append([x[1] for x in tower])
+    return g, v
+
+
+def merge_grad_list(all_grads, all_vars):
+    """
+    Args:
+        all_grads (K x N): gradients
+        all_vars(K x N): variables
+
+    Return:
+        K x N x 2: list of list of (grad, var) pairs
+    """
+    return [list(zip(gs, vs)) for gs, vs in zip(all_grads, all_vars)]
+
+
+def allreduce_grads(all_grads, average):
+    """
+    All-reduce average the gradients among K devices. Results are broadcasted to all devices.
+
+    Args:
+        all_grads (K x N): List of list of gradients. N is the number of variables.
+        average (bool): average gradients or not.
+
+    Returns:
+        K x N: same as input, but each grad is replaced by the average over K devices.
+    """
+    from tensorflow.contrib import nccl
+    nr_tower = len(all_grads)
+    if nr_tower == 1:
+        return all_grads
+    new_all_grads = []  # N x K
+    for grads in zip(*all_grads):
+        summed = nccl.all_sum(grads)
+
+        grads_for_devices = []  # K
+        for g in summed:
+            with tf.device(g.device):
+                # tensorflow/benchmarks didn't average gradients
+                if average:
+                    g = tf.multiply(g, 1.0 / nr_tower)
+            grads_for_devices.append(g)
+        new_all_grads.append(grads_for_devices)
+
+    # transpose to K x N
+    ret = list(zip(*new_all_grads))
+    return ret
+
+
 def _reduce_entries(*entries):
     num_gpus = len(entries)
     if entries[0] is None:
@@ -399,16 +528,16 @@ def reduce_tensors(structures, shallow=False):
     return reduced_structure
 
 
-def get_checkpoint_restore_saver(checkpoint, skip_global_step=False, restore_to_checkpoint_mapping=None,
-                                 restore_scope=None):
+def get_checkpoint_restore_saver(checkpoint, var_list=None, skip_global_step=False, restore_to_checkpoint_mapping=None):
     if os.path.isdir(checkpoint):
         # latest_checkpoint doesn't work when the path has special characters
         checkpoint = tf.train.latest_checkpoint(checkpoint)
     checkpoint_reader = tf.pywrap_tensorflow.NewCheckpointReader(checkpoint)
     checkpoint_var_names = checkpoint_reader.get_variable_to_shape_map().keys()
     restore_to_checkpoint_mapping = restore_to_checkpoint_mapping or (lambda name: name.split(':')[0])
-    restore_vars = {restore_to_checkpoint_mapping(var.name): var
-                    for var in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=restore_scope)}
+    if not var_list:
+        var_list = tf.global_variables()
+    restore_vars = {restore_to_checkpoint_mapping(var.name, checkpoint_var_names): var for var in var_list}
     if skip_global_step and 'global_step' in restore_vars:
         del restore_vars['global_step']
     # restore variables that are both in the global graph and in the checkpoint
@@ -459,70 +588,19 @@ def pixel_distribution(pos, height, width):
     return tf.add_n([wa * Ia, wb * Ib, wc * Ic, wd * Id])
 
 
-class PersistentOpEvaluator(object):
-    """Evaluate a fixed TensorFlow graph repeatedly, safely, efficiently.
-    Extend this class to create a particular kind of op evaluator, like an
-    image encoder. In `initialize_graph`, create an appropriate TensorFlow
-    graph with placeholder inputs. In `run`, evaluate this graph and
-    return its result. This class will manage a singleton graph and
-    session to preserve memory usage, and will ensure that this graph and
-    session do not interfere with other concurrent sessions.
-    A subclass of this class offers a threadsafe, highly parallel Python
-    entry point for evaluating a particular TensorFlow graph.
-    Example usage:
-        class FluxCapacitanceEvaluator(PersistentOpEvaluator):
-            \"\"\"Compute the flux capacitance required for a system.
-            Arguments:
-                x: Available power input, as a `float`, in jigawatts.
-            Returns:
-                A `float`, in nanofarads.
-            \"\"\"
-            def initialize_graph(self):
-                self._placeholder = tf.placeholder(some_dtype)
-                self._op = some_op(self._placeholder)
-            def run(self, x):
-                return self._op.eval(feed_dict: {self._placeholder: x})
-        evaluate_flux_capacitance = FluxCapacitanceEvaluator()
-        for x in xs:
-            evaluate_flux_capacitance(x)
+def flow_to_rgb(flows):
+    """The last axis should have dimension 2, for x and y values."""
 
-    Taken from here:
-    https://github.com/tensorflow/tensorboard/blob/master/tensorboard/util.py
-    """
+    def cartesian_to_polar(x, y):
+        magnitude = tf.sqrt(tf.square(x) + tf.square(y))
+        angle = tf.atan2(y, x)
+        return magnitude, angle
 
-    def __init__(self):
-        super(PersistentOpEvaluator, self).__init__()
-        self._session = None
-        self._initialization_lock = threading.Lock()
-
-    def _lazily_initialize(self):
-        """Initialize the graph and session, if this has not yet been done."""
-        with self._initialization_lock:
-            if self._session:
-                return
-            graph = tf.Graph()
-            with graph.as_default():
-                self.initialize_graph()
-            config = tf.ConfigProto(gpu_options=tf.GPUOptions(allow_growth=True))
-            self._session = tf.Session(graph=graph, config=config)
-
-    def initialize_graph(self):
-        """Create the TensorFlow graph needed to compute this operation.
-        This should write ops to the default graph and return `None`.
-        """
-        raise NotImplementedError('Subclasses must implement "initialize_graph".')
-
-    def run(self, *args, **kwargs):
-        """Evaluate the ops with the given input.
-        When this function is called, the default session will have the
-        graph defined by a previous call to `initialize_graph`. This
-        function should evaluate any ops necessary to compute the result of
-        the query for the given *args and **kwargs, likely returning the
-        result of a call to `some_op.eval(...)`.
-        """
-        raise NotImplementedError('Subclasses must implement "run".')
-
-    def __call__(self, *args, **kwargs):
-        self._lazily_initialize()
-        with self._session.as_default():
-            return self.run(*args, **kwargs)
+    mag, ang = cartesian_to_polar(*tf.unstack(flows, axis=-1))
+    ang_normalized = (ang + np.pi) / (2 * np.pi)
+    mag_min = tf.reduce_min(mag)
+    mag_max = tf.reduce_max(mag)
+    mag_normalized = (mag - mag_min) / (mag_max - mag_min)
+    hsv = tf.stack([ang_normalized, tf.ones_like(ang), mag_normalized], axis=-1)
+    rgb = tf.image.hsv_to_rgb(hsv)
+    return rgb

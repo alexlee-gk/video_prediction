@@ -48,6 +48,7 @@ class SoftmotionVideoDataset(VideoDataset):
         hparams = dict(
             context_frames=2,
             sequence_length=12,
+            long_sequence_length=30,
             time_shift=2,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))

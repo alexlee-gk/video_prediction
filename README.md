@@ -24,6 +24,7 @@ cd video_prediction
 ```
 - Install TensorFlow >= 1.9 and dependencies from http://tensorflow.org/
 - Install ffmpeg (optional, used to generate GIFs for visualization, e.g. in TensorBoard)
+- Install [NCCL](https://developer.nvidia.com/nccl) (optional, used for multi-GPU support)
 - Install other dependencies
 ```bash
 pip install -r requirements.txt
@@ -71,6 +72,10 @@ CUDA_VISIBLE_DEVICES=0 python scripts/train.py --input_dir data/bair --dataset b
   --output_dir logs/bair_action_free/ours_savp
 ```
 - To view training and validation information (e.g. loss plots, GIFs of predictions), run `tensorboard --logdir logs/bair_action_free --port 6006` and open http://localhost:6006.
+  - Summaries corresponding to the training and validation set are named the same except that the tags of the latter end in "\_1".
+  - Summaries corresponding to the validation set with sequences that are longer than the ones used in training end in "\_2", if applicable (i.e. if the dataset's `long_sequence_length` differs from `sequence_length`).
+  - Summaries of the metrics over prediction steps are shown as 2D plots in the repurposed PR curves section. To see them, tensorboard needs to be built from source after commenting out two lines from their source code (see [tensorflow/tensorboard#1110](https://github.com/tensorflow/tensorboard/issues/1110)).
+  - Summaries with names starting with "eval\_" correspond to the best/average/worst metrics/images out of 100 samples for the stochastic models (as in the paper). The ones starting with "accum\_eval\_" are the same except that they where computed over (roughly) the whole validation set, as opposed to only a single minibatch of the validation set.
 - For multi-GPU training, set `CUDA_VISIBLE_DEVICES` to a comma-separated list of devices, e.g. `CUDA_VISIBLE_DEVICES=0,1,2,3`. To use the CPU, set `CUDA_VISIBLE_DEVICES=""`.
 - See more training details for other datasets and models in [`scripts/train_all.sh`](scripts/train_all.sh).
 
