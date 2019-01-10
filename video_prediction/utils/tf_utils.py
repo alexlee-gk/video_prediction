@@ -64,24 +64,19 @@ def replace_read_ops(loss_or_losses, var_list):
     # filter out variables that are not involved in computing the loss
     var_list = [var for var in var_list if var.op in ops]
 
-    # assume that for each variable, the only op required to compute the loss
-    # is a read op, and there is exactly one per variable
-    read_ops = []
     for var in var_list:
         output, = var.op.outputs
-        read_op, = set(output.consumers()) & ops
-        read_ops.append(read_op)
-
-    for var, read_op in zip(var_list, read_ops):
-        with tf.name_scope('/'.join(read_op.name.split('/')[:-1])):
-            with tf.device(read_op.device):
-                read_t, = read_op.outputs
-                consumer_ops = set(read_t.consumers()) & ops
-                # consumer_sgv might have multiple inputs, but we only care
-                # about replacing the input that is read_t
-                consumer_sgv = ge.sgv(consumer_ops)
-                consumer_sgv = consumer_sgv.remap_inputs([list(consumer_sgv.inputs).index(read_t)])
-                ge.connect(ge.sgv(var.read_value().op), consumer_sgv)
+        read_ops = set(output.consumers()) & ops
+        for read_op in read_ops:
+            with tf.name_scope('/'.join(read_op.name.split('/')[:-1])):
+                with tf.device(read_op.device):
+                    read_t, = read_op.outputs
+                    consumer_ops = set(read_t.consumers()) & ops
+                    # consumer_sgv might have multiple inputs, but we only care
+                    # about replacing the input that is read_t
+                    consumer_sgv = ge.sgv(consumer_ops)
+                    consumer_sgv = consumer_sgv.remap_inputs([list(consumer_sgv.inputs).index(read_t)])
+                    ge.connect(ge.sgv(var.read_value().op), consumer_sgv)
 
 
 def print_loss_info(losses, *tensors):

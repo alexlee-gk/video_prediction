@@ -387,6 +387,8 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             video_sn_vae_gan_weight=0.0,
             gan_feature_l2_weight=0.0,
             gan_feature_cdist_weight=0.0,
+            vae_gan_feature_l2_weight=0.0,
+            vae_gan_feature_cdist_weight=0.0,
             gan_loss_type='LSGAN',
             joint_gan_optimization=False,
             kl_weight=0.0,
@@ -790,7 +792,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                                                    for discrim_feature_fake, discrim_feature_real in zip(discrim_features_fake, discrim_features_real)])
                     gen_losses["gen%s_gan_feature_l2_loss" % infix] = (gen_gan_feature_l2_loss, hparams.gan_feature_l2_weight)
                 if hparams.gan_feature_cdist_weight:
-                    gen_gan_feature_cdist_loss = sum([vp.metrics.cosine_distance(discrim_feature_fake, discrim_feature_real)
+                    gen_gan_feature_cdist_loss = sum([vp.losses.cosine_distance(discrim_feature_fake, discrim_feature_real)
                                                       for discrim_feature_fake, discrim_feature_real in zip(discrim_features_fake, discrim_features_real)])
                     gen_losses["gen%s_gan_feature_cdist_loss" % infix] = (gen_gan_feature_cdist_loss, hparams.gan_feature_cdist_weight)
         vae_gan_weights = {'_image_sn': hparams.image_sn_vae_gan_weight,
@@ -800,7 +802,7 @@ class VideoPredictionModel(BaseVideoPredictionModel):
             if vae_gan_weight:
                 gen_vae_gan_loss = vp.losses.gan_loss(outputs['discrim%s_logits_enc_fake' % infix], 1.0, hparams.gan_loss_type)
                 gen_losses["gen%s_vae_gan_loss" % infix] = (gen_vae_gan_loss, vae_gan_weight)
-            if vae_gan_weight and (hparams.gan_feature_l2_weight or hparams.gan_feature_cdist_weight):
+            if vae_gan_weight and (hparams.vae_gan_feature_l2_weight or hparams.vae_gan_feature_cdist_weight):
                 i_feature = 0
                 discrim_features_enc_fake = []
                 discrim_features_enc_real = []
@@ -812,14 +814,14 @@ class VideoPredictionModel(BaseVideoPredictionModel):
                     discrim_features_enc_fake.append(discrim_feature_enc_fake)
                     discrim_features_enc_real.append(discrim_feature_enc_real)
                     i_feature += 1
-                if hparams.gan_feature_l2_weight:
+                if hparams.vae_gan_feature_l2_weight:
                     gen_vae_gan_feature_l2_loss = sum([vp.losses.l2_loss(discrim_feature_enc_fake, discrim_feature_enc_real)
                                                        for discrim_feature_enc_fake, discrim_feature_enc_real in zip(discrim_features_enc_fake, discrim_features_enc_real)])
-                    gen_losses["gen%s_vae_gan_feature_l2_loss" % infix] = (gen_vae_gan_feature_l2_loss, hparams.gan_feature_l2_weight)
-                if hparams.gan_feature_cdist_weight:
-                    gen_vae_gan_feature_cdist_loss = sum([vp.metrics.cosine_distance(discrim_feature_enc_fake, discrim_feature_enc_real)
+                    gen_losses["gen%s_vae_gan_feature_l2_loss" % infix] = (gen_vae_gan_feature_l2_loss, hparams.vae_gan_feature_l2_weight)
+                if hparams.vae_gan_feature_cdist_weight:
+                    gen_vae_gan_feature_cdist_loss = sum([vp.losses.cosine_distance(discrim_feature_enc_fake, discrim_feature_enc_real)
                                                           for discrim_feature_enc_fake, discrim_feature_enc_real in zip(discrim_features_enc_fake, discrim_features_enc_real)])
-                    gen_losses["gen%s_vae_gan_feature_cdist_loss" % infix] = (gen_vae_gan_feature_cdist_loss, hparams.gan_feature_cdist_weight)
+                    gen_losses["gen%s_vae_gan_feature_cdist_loss" % infix] = (gen_vae_gan_feature_cdist_loss, hparams.vae_gan_feature_cdist_weight)
         if hparams.kl_weight:
             gen_kl_loss = vp.losses.kl_loss(outputs['zs_mu_enc'], outputs['zs_log_sigma_sq_enc'],
                                             outputs.get('zs_mu_prior'), outputs.get('zs_log_sigma_sq_prior'))

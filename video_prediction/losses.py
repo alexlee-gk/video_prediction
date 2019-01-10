@@ -11,6 +11,17 @@ def l2_loss(pred, target):
     return tf.reduce_mean(tf.square(target - pred))
 
 
+def normalize_tensor(tensor, eps=1e-10):
+    norm_factor = tf.norm(tensor, axis=-1, keepdims=True)
+    return tensor / (norm_factor + eps)
+
+
+def cosine_distance(tensor0, tensor1, keep_axis=None):
+    tensor0 = normalize_tensor(tensor0)
+    tensor1 = normalize_tensor(tensor1)
+    return tf.reduce_mean(tf.reduce_sum(tf.square(tensor0 - tensor1), axis=-1)) / 2.0
+                                
+
 def charbonnier_loss(x, epsilon=0.001):
     return tf.reduce_mean(tf.sqrt(tf.square(x) + tf.square(epsilon)))
 
