@@ -10,6 +10,8 @@ TensorFlow implementation for stochastic adversarial video prediction. Given a s
 [Alex X. Lee](https://people.eecs.berkeley.edu/~alexlee_gk/), [Richard Zhang](https://richzhang.github.io/), [Frederik Ebert](https://febert.github.io/), [Pieter Abbeel](https://people.eecs.berkeley.edu/~pabbeel/), [Chelsea Finn](https://people.eecs.berkeley.edu/~cbfinn/), [Sergey Levine](https://people.eecs.berkeley.edu/~svlevine/).  
 arXiv preprint arXiv:1804.01523, 2018.
 
+An alternative implementation of SAVP is available in the [Tensor2Tensor](https://github.com/tensorflow/tensor2tensor) library.
+
 ## Getting Started ###
 ### Prerequisites
 - Linux or macOS
