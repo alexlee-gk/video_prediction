@@ -61,10 +61,10 @@ def main():
     model_hparams_dict = {}
     if args.checkpoint:
         checkpoint_dir = os.path.normpath(args.checkpoint)
-        if not os.path.exists(checkpoint_dir):
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), checkpoint_dir)
         if not os.path.isdir(args.checkpoint):
             checkpoint_dir, _ = os.path.split(checkpoint_dir)
+        if not os.path.exists(checkpoint_dir):
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), checkpoint_dir)
         with open(os.path.join(checkpoint_dir, "options.json")) as f:
             print("loading options from checkpoint %s" % args.checkpoint)
             options = json.loads(f.read())
@@ -78,7 +78,6 @@ def main():
         try:
             with open(os.path.join(checkpoint_dir, "model_hparams.json")) as f:
                 model_hparams_dict = json.loads(f.read())
-                model_hparams_dict.pop('num_gpus', None)  # backwards-compatibility
         except FileNotFoundError:
             print("model_hparams.json was not loaded because it does not exist")
         args.output_gif_dir = args.output_gif_dir or os.path.join(args.results_gif_dir, os.path.split(checkpoint_dir)[1])
@@ -97,18 +96,24 @@ def main():
     print('------------------------------------- End --------------------------------------')
 
     VideoDataset = datasets.get_dataset_class(args.dataset)
-    dataset = VideoDataset(args.input_dir, mode=args.mode, num_epochs=args.num_epochs, seed=args.seed,
-                           hparams_dict=dataset_hparams_dict, hparams=args.dataset_hparams)
-
-    def override_hparams_dict(dataset):
-        hparams_dict = dict(model_hparams_dict)
-        hparams_dict['context_frames'] = dataset.hparams.context_frames
-        hparams_dict['sequence_length'] = dataset.hparams.sequence_length
-        hparams_dict['repeat'] = dataset.hparams.time_shift
-        return hparams_dict
+    dataset = VideoDataset(
+        args.input_dir,
+        mode=args.mode,
+        num_epochs=args.num_epochs,
+        seed=args.seed,
+        hparams_dict=dataset_hparams_dict,
+        hparams=args.dataset_hparams)
 
     VideoPredictionModel = models.get_model_class(args.model)
-    model = VideoPredictionModel(mode='test', hparams_dict=override_hparams_dict(dataset), hparams=args.model_hparams)
+    hparams_dict = dict(model_hparams_dict)
+    hparams_dict.update({
+        'context_frames': dataset.hparams.context_frames,
+        'sequence_length': dataset.hparams.sequence_length,
+        'repeat': dataset.hparams.time_shift,
+    })
+    model = VideoPredictionModel(
+        hparams_dict=hparams_dict,
+        hparams=args.model_hparams)
 
     if args.num_samples:
         if args.num_samples > dataset.num_examples_per_epoch():
@@ -117,17 +122,10 @@ def main():
     else:
         num_examples_per_epoch = dataset.num_examples_per_epoch()
     if num_examples_per_epoch % args.batch_size != 0:
-        raise ValueError('batch_size should evenly divide the dataset')
+        raise ValueError('batch_size should evenly divide the dataset size %d' % num_examples_per_epoch)
 
-    inputs, _ = dataset.make_batch(args.batch_size)
-    if not isinstance(model, models.GroundTruthVideoPredictionModel):
-        # remove ground truth data past context_frames to prevent accidentally using it
-        for k, v in inputs.items():
-            if k != 'actions':
-                inputs[k] = v[:, :model.hparams.context_frames]
-
+    inputs = dataset.make_batch(args.batch_size)
     input_phs = {k: tf.placeholder(v.dtype, v.shape, '%s_ph' % k) for k, v in inputs.items()}
-
     with tf.variable_scope(''):
         model.build_graph(input_phs)
 
@@ -144,6 +142,7 @@ def main():
     gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=args.gpu_mem_frac)
     config = tf.ConfigProto(gpu_options=gpu_options, allow_soft_placement=True)
     sess = tf.Session(config=config)
+    sess.graph.as_default()
 
     model.restore(sess, args.checkpoint)
 
@@ -170,7 +169,10 @@ def main():
                 gen_image_fname_pattern = 'gen_image_%%05d_%%02d_%%0%dd.png' % max(2, len(str(len(gen_images_) - 1)))
                 for t, gen_image in enumerate(gen_images_):
                     gen_image_fname = gen_image_fname_pattern % (sample_ind + i, stochastic_sample_ind, t)
-                    gen_image = cv2.cvtColor(gen_image, cv2.COLOR_RGB2BGR)
+                    if gen_image.shape[-1] == 1:
+                      gen_image = np.tile(gen_image, (1, 1, 3))
+                    else:
+                      gen_image = cv2.cvtColor(gen_image, cv2.COLOR_RGB2BGR)
                     cv2.imwrite(os.path.join(args.output_png_dir, gen_image_fname), gen_image)
 
         sample_ind += args.batch_size
