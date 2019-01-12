@@ -31,19 +31,13 @@ def save_image_sequence(prefix_fname, images, time_start_ind=0):
         cv2.imwrite(image_fname, image)
 
 
-def save_image_sequences(prefix_fname, images, overlaid_images=None, centers=None,
-                         radius=5, alpha=0.8, sample_start_ind=0, time_start_ind=0):
+def save_image_sequences(prefix_fname, images, sample_start_ind=0, time_start_ind=0):
     head, tail = os.path.split(prefix_fname)
     if head and not os.path.exists(head):
         os.makedirs(head)
-    if overlaid_images is None:
-        overlaid_images = [None] * len(images)
-    if centers is None:
-        centers = [None] * len(images)
-    for i, (images_, overlaid_images_, centers_) in enumerate(zip(images, overlaid_images, centers)):
+    for i, images_ in enumerate(images):
         images_fname = '%s_%05d' % (prefix_fname, sample_start_ind + i)
-        save_image_sequence(images_fname, images_, overlaid_images_, centers_,
-                            radius=radius, alpha=alpha, time_start_ind=time_start_ind)
+        save_image_sequence(images_fname, images_, time_start_ind=time_start_ind)
 
 
 def save_metrics(prefix_fname, metrics, sample_start_ind=0):
