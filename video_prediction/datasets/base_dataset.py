@@ -128,7 +128,7 @@ class BaseVideoDataset(object):
 
     def make_dataset(self, batch_size):
         filenames = self.filenames
-        shuffle = self.mode == 'train' or self.hparams.shuffle_on_val
+        shuffle = self.mode == 'train' or (self.mode == 'val' and self.hparams.shuffle_on_val)
         if shuffle:
             random.shuffle(filenames)
 
@@ -144,7 +144,9 @@ class BaseVideoDataset(object):
             seqs = OrderedDict(list(state_like_seqs.items()) + list(action_like_seqs.items()))
             return seqs
 
-        dataset = dataset.apply(tf.contrib.data.map_and_batch(_parser, batch_size, drop_remainder=True))
+        num_parallel_calls = None if shuffle else 1  # for reproducibility (e.g. sampled subclips from the test set)
+        dataset = dataset.apply(tf.contrib.data.map_and_batch(
+            _parser, batch_size, drop_remainder=True, num_parallel_calls=num_parallel_calls))
         dataset = dataset.prefetch(batch_size)
         return dataset
 
