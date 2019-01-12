@@ -115,6 +115,10 @@ def main():
         hparams_dict=hparams_dict,
         hparams=args.model_hparams)
 
+    sequence_length = model.hparams.sequence_length
+    context_frames = model.hparams.context_frames
+    future_length = sequence_length - context_frames
+
     if args.num_samples:
         if args.num_samples > dataset.num_examples_per_epoch():
             raise ValueError('num_samples cannot be larger than the dataset')
@@ -159,6 +163,8 @@ def main():
         feed_dict = {input_ph: input_results[name] for name, input_ph in input_phs.items()}
         for stochastic_sample_ind in range(args.num_stochastic_samples):
             gen_images = sess.run(model.outputs['gen_images'], feed_dict=feed_dict)
+            # only keep the future frames
+            gen_images = gen_images[:, -future_length:]
             for i, gen_images_ in enumerate(gen_images):
                 gen_images_ = (gen_images_ * 255.0).astype(np.uint8)
 
