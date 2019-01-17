@@ -641,8 +641,9 @@ class SV2PVideoPredictionModel(VideoPredictionModel):
             multi_latent=False,
             latent_std_min=-5.0,
             latent_channels=1,
-            num_iterations_1st_stage=100000,
-            kl_anneal_steps=(200000, 220000),
+            num_iterations_1st_stage=50000,
+            kl_anneal_steps=(100000, 120000),
+            max_steps=200000,
             decay_steps=(0, 0),  # do not decay the learning rate (doing so produces blurrier images)
         )
         # Notes on equivalence with reference implementation:
