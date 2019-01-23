@@ -603,7 +603,7 @@ def scheduled_sample(ground_truth_x, generated_x, batch_size, num_ground_truth):
                              [ground_truth_examps, generated_examps])
 
 
-def generator_fn(inputs, hparams=None):
+def generator_fn(inputs, mode, hparams):
     images = tf.unstack(inputs['images'], axis=0)
     actions = tf.unstack(inputs['actions'], axis=0)
     states = tf.unstack(inputs['states'], axis=0)
@@ -617,13 +617,14 @@ def generator_fn(inputs, hparams=None):
     else:
         kern_size = hparams.kernel_size
 
+    schedule_sampling_k = hparams.schedule_sampling_k if mode == 'train' else -1
     conf = {
         'context_frames': hparams.context_frames,  # of frames before predictions.' ,
         'use_state': 1,  # 'Whether or not to give the state+action to the model' ,
         'ngf': hparams.ngf,
         'model': hparams.transformation.upper(),  # 'model architecture to use - CDNA, DNA, or STP' ,
         'num_masks': hparams.num_masks,  # 'number of masks, usually 1 for DNA, 10 for CDNA, STN.' ,
-        'schedsamp_k': hparams.schedule_sampling_k,  # 'The k hyperparameter for scheduled sampling -1 for no scheduled sampling.' ,
+        'schedsamp_k': schedule_sampling_k,  # 'The k hyperparameter for scheduled sampling -1 for no scheduled sampling.' ,
         'kern_size': kern_size,  # size of DNA kerns
     }
     if hparams.first_image_background:
@@ -641,9 +642,7 @@ def generator_fn(inputs, hparams=None):
     }
     if 'pix_distribs' in inputs:
         outputs['gen_pix_distribs'] = tf.stack(m.gen_distrib1, axis=0)
-    outputs = {name: output[hparams.context_frames - 1:] for name, output in outputs.items()}
-    gen_images = outputs['gen_images'][hparams.context_frames - 1:]
-    return gen_images, outputs
+    return outputs
 
 
 class SNAVideoPredictionModel(VideoPredictionModel):
@@ -666,15 +665,3 @@ class SNAVideoPredictionModel(VideoPredictionModel):
             schedule_sampling_k=900.0,
         )
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
-
-    def parse_hparams(self, hparams_dict, hparams):
-        hparams = super(SNAVideoPredictionModel, self).parse_hparams(hparams_dict, hparams)
-        if self.mode == 'test':
-            def override_hparams_maybe(name, value):
-                orig_value = hparams.values()[name]
-                if orig_value != value:
-                    print('Overriding hparams from %s=%r to %r for mode=%s.' %
-                          (name, orig_value, value, self.mode))
-                    hparams.set_hparam(name, value)
-            override_hparams_maybe('schedule_sampling_k', -1)
-        return hparams

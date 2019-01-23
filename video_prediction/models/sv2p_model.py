@@ -585,32 +585,34 @@ def generator_fn(inputs, mode, hparams):
                         stp=hparams.transformation == 'stp',
                         context_frames=hparams.context_frames,
                         hparams=hparams)
-
-    outputs_enc = encoder_fn(inputs, hparams)
-    tf.get_variable_scope().reuse_variables()
-    gen_images_enc, gen_states_enc = \
-        construct_model(images,
-                        actions,
-                        states,
-                        outputs_enc=outputs_enc,
-                        iter_num=iter_num,
-                        k=schedule_sampling_k,
-                        use_state='actions' in inputs,
-                        num_masks=hparams.num_masks,
-                        cdna=hparams.transformation == 'cdna',
-                        dna=hparams.transformation == 'dna',
-                        stp=hparams.transformation == 'stp',
-                        context_frames=hparams.context_frames,
-                        hparams=hparams)
-
     outputs = {
         'gen_images': tf.stack(gen_images, axis=0),
         'gen_states': tf.stack(gen_states, axis=0),
-        'gen_images_enc': tf.stack(gen_images_enc, axis=0),
-        'gen_states_enc': tf.stack(gen_states_enc, axis=0),
-        'zs_mu_enc': outputs_enc['zs_mu_enc'],
-        'zs_log_sigma_sq_enc': outputs_enc['zs_log_sigma_sq_enc'],
     }
+
+    if mode == 'train':
+        outputs_enc = encoder_fn(inputs, hparams)
+        tf.get_variable_scope().reuse_variables()
+        gen_images_enc, gen_states_enc = \
+            construct_model(images,
+                            actions,
+                            states,
+                            outputs_enc=outputs_enc,
+                            iter_num=iter_num,
+                            k=schedule_sampling_k,
+                            use_state='actions' in inputs,
+                            num_masks=hparams.num_masks,
+                            cdna=hparams.transformation == 'cdna',
+                            dna=hparams.transformation == 'dna',
+                            stp=hparams.transformation == 'stp',
+                            context_frames=hparams.context_frames,
+                            hparams=hparams)
+        outputs.update({
+            'gen_images_enc': tf.stack(gen_images_enc, axis=0),
+            'gen_states_enc': tf.stack(gen_states_enc, axis=0),
+            'zs_mu_enc': outputs_enc['zs_mu_enc'],
+            'zs_log_sigma_sq_enc': outputs_enc['zs_log_sigma_sq_enc'],
+        })
     return outputs
 
 
@@ -655,3 +657,22 @@ class SV2PVideoPredictionModel(VideoPredictionModel):
         # Based on Figure 4 and the Appendix, it seems that in the 3rd stage, the kl_weight is
         # linearly increased for the first 20k iterations of this stage.
         return dict(itertools.chain(default_hparams.items(), hparams.items()))
+
+    def parse_hparams(self, hparams_dict, hparams):
+        # backwards compatibility
+        deprecated_hparams_keys = [
+            'num_gpus',
+            'acvideo_gan_weight',
+            'acvideo_vae_gan_weight',
+            'image_gan_weight',
+            'image_vae_gan_weight',
+            'tuple_gan_weight',
+            'tuple_vae_gan_weight',
+            'gan_weight',
+            'vae_gan_weight',
+            'video_gan_weight',
+            'video_vae_gan_weight',
+        ]
+        for deprecated_hparams_key in deprecated_hparams_keys:
+            hparams_dict.pop(deprecated_hparams_key, None)
+        return super(SV2PVideoPredictionModel, self).parse_hparams(hparams_dict, hparams)
