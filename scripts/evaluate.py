@@ -231,6 +231,7 @@ def main():
         'repeat': dataset.hparams.time_shift,
     })
     model = VideoPredictionModel(
+        mode=args.mode,
         hparams_dict=hparams_dict,
         hparams=args.model_hparams,
         eval_num_samples=args.num_stochastic_samples,

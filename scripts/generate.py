@@ -112,6 +112,7 @@ def main():
         'repeat': dataset.hparams.time_shift,
     })
     model = VideoPredictionModel(
+        mode=args.mode,
         hparams_dict=hparams_dict,
         hparams=args.model_hparams)
 
@@ -166,11 +167,15 @@ def main():
             # only keep the future frames
             gen_images = gen_images[:, -future_length:]
             for i, gen_images_ in enumerate(gen_images):
+                context_images_ = (input_results['images'][i] * 255.0).astype(np.uint8)
                 gen_images_ = (gen_images_ * 255.0).astype(np.uint8)
 
                 gen_images_fname = 'gen_image_%05d_%02d.gif' % (sample_ind + i, stochastic_sample_ind)
+                context_and_gen_images = list(context_images_[:context_frames]) + list(gen_images_)
+                if args.gif_length:
+                    context_and_gen_images = context_and_gen_images[:args.gif_length]
                 save_gif(os.path.join(args.output_gif_dir, gen_images_fname),
-                         gen_images_[:args.gif_length] if args.gif_length else gen_images_, fps=args.fps)
+                         context_and_gen_images, fps=args.fps)
 
                 gen_image_fname_pattern = 'gen_image_%%05d_%%02d_%%0%dd.png' % max(2, len(str(len(gen_images_) - 1)))
                 for t, gen_image in enumerate(gen_images_):
