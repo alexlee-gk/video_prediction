@@ -26,7 +26,7 @@ def save_gif(gif_fname, images, fps):
            '-vcodec', 'rawvideo',
            '-r', '%.02f' % fps,
            '-s', '%dx%d' % (w, h),
-           '-pix_fmt', {1: 'gray', 3: 'rgb24'}[c],
+           '-pix_fmt', {1: 'gray', 3: 'rgb24', 4: 'rgba'}[c],
            '-i', '-',
            '-filter_complex', '[0:v]split[x][z];[z]palettegen[y];[x][y]paletteuse',
            '-r', '%.02f' % fps,
