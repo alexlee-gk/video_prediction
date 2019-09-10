@@ -64,7 +64,7 @@ fi
 TARGET_DIR=./pretrained_models/${DATASET_NAME}/${MODEL_NAME}
 mkdir -p ${TARGET_DIR}
 TAR_FNAME=${model_name_to_fname[${MODEL_NAME}]}.tar.gz
-URL=https://people.eecs.berkeley.edu/~alexlee_gk/projects/savp/pretrained_models/${TAR_FNAME}
+URL=http://rail.eecs.berkeley.edu/models/savp/pretrained_models/${TAR_FNAME}
 echo "Downloading '${TAR_FNAME}'"
 wget ${URL} -O ${TARGET_DIR}/${TAR_FNAME}
 tar -xvf ${TARGET_DIR}/${TAR_FNAME} -C ${TARGET_DIR}

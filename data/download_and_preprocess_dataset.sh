@@ -46,7 +46,7 @@ elif [ $1 = "kth" ]; then
   mkdir -p ${TARGET_DIR}/processed
   # download files with metadata specifying the subsequences
   TAR_FNAME=kth_meta.tar.gz
-  URL=https://people.eecs.berkeley.edu/~alexlee_gk/projects/savp/data/${TAR_FNAME}
+  URL=http://rail.eecs.berkeley.edu/models/savp/data/${TAR_FNAME}
   echo "Downloading '${TAR_FNAME}'"
   wget ${URL} -O ${TARGET_DIR}/processed/${TAR_FNAME}
   tar -xzvf ${TARGET_DIR}/processed/${TAR_FNAME} --strip 1 -C ${TARGET_DIR}/processed
